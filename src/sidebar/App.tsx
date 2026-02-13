@@ -13,7 +13,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 function App() {
     const [messages, setMessages] = useState<Message[]>([])
     const [isLoading, setIsLoading] = useState(false)
-    const [selectedModel, setSelectedModel] = useState<ModelId>('kimi-k2.5')
+    const [selectedModel, setSelectedModel] = useState<ModelId>('gpt-oss-20b')
 
     const handleSend = async (text: string) => {
         console.log("%c >>> frontend: handleSend called", "color: #20b8cd; font-weight: bold", { text });
@@ -24,6 +24,101 @@ function App() {
         setIsLoading(true)
 
         try {
+            // Fetch page context directly via Chrome APIs
+            interface PageContext { url: string; title: string; description: string; textContent: string }
+            let pageContext: PageContext | null = null;
+            try {
+                const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+                const tab = tabs[0];
+                console.log("%c >>> frontend: active tab found", "color: #20b8cd", { id: tab?.id, url: tab?.url, title: tab?.title });
+
+                if (tab?.id) {
+                    const url = tab.url || '';
+                    const tabTitle = tab.title || '';
+
+                    // For restricted URLs, use tab metadata only
+                    const isRestricted =
+                        url.startsWith('chrome://') ||
+                        url.startsWith('chrome-extension://') ||
+                        url.startsWith('about:') ||
+                        url.startsWith('edge://') ||
+                        url.startsWith('brave://');
+
+                    if (isRestricted) {
+                        pageContext = { url, title: tabTitle, description: '', textContent: '' };
+                    } else {
+                        // Try executeScript for full page content
+                        try {
+                            const results = await chrome.scripting.executeScript({
+                                target: { tabId: tab.id },
+                                func: () => {
+                                    const title = document.title || '';
+                                    const metaDesc =
+                                        document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+                                    let text = document.body?.innerText || '';
+                                    text = text.replace(/\s+/g, ' ').trim();
+                                    if (text.length > 3000) {
+                                        text = text.substring(0, 3000) + '...';
+                                    }
+                                    return {
+                                        url: window.location.href,
+                                        title,
+                                        description: metaDesc,
+                                        textContent: text,
+                                    };
+                                },
+                            });
+                            if (results?.[0]?.result) {
+                                pageContext = results[0].result as PageContext;
+                            }
+                        } catch (scriptErr) {
+                            // executeScript fails on protected pages (Chrome Web Store, etc.)
+                            // Fall back to tab metadata which is always available
+                            console.warn("frontend: executeScript blocked, falling back to tab metadata:", scriptErr);
+                            pageContext = { url, title: tabTitle, description: '', textContent: '' };
+                        }
+                    }
+                }
+            } catch (ctxErr) {
+                console.warn("frontend: failed to get page context entirely:", ctxErr);
+            }
+
+            const contextTime = performance.now();
+            console.log(`%c >>> frontend: page context fetched in ${((contextTime - startTime) / 1000).toFixed(2)}s`, "color: #20b8cd; font-weight: bold", pageContext);
+
+            // Build the messages array for the API
+            const apiMessages: { role: string; content: string }[] = [];
+
+            // Add page context as system message
+            if (pageContext && (pageContext.url || pageContext.title)) {
+                const parts = [
+                    `You are a helpful browser assistant. The user is currently viewing a web page.`,
+                    ``,
+                    `PAGE CONTEXT:`,
+                    `- URL: ${pageContext.url}`,
+                    `- Page Title: ${pageContext.title}`,
+                ];
+                if (pageContext.description) {
+                    parts.push(`- Meta Description: ${pageContext.description}`);
+                }
+                if (pageContext.textContent) {
+                    parts.push(`- Visible Page Content (excerpt): ${pageContext.textContent}`);
+                }
+                parts.push('');
+                parts.push('INSTRUCTIONS: Use the above page context to make your responses relevant to what the user is currently viewing. Be conversational and proactive — infer what the user might be trying to do based on the page they are on. Always acknowledge what you can see about their current page.');
+                apiMessages.push({ role: 'system', content: parts.join('\n') });
+            }
+
+            // Add conversation history
+            for (const m of messages) {
+                apiMessages.push({ role: m.role, content: m.content });
+            }
+
+            // Add current user message
+            apiMessages.push({ role: userMessage.role, content: userMessage.content });
+
+            console.log("%c >>> frontend: API messages payload", "color: #20b8cd; font-weight: bold", apiMessages.map(m => ({ role: m.role, contentLength: m.content.length })));
+
             console.log("frontend: sending request to edge function (streaming)...");
             const response = await fetch(`${SUPABASE_URL}/functions/v1/chat`, {
                 method: 'POST',
@@ -34,10 +129,7 @@ function App() {
                 },
                 body: JSON.stringify({
                     model: selectedModel,
-                    messages: [...messages, userMessage].map((m) => ({
-                        role: m.role,
-                        content: m.content,
-                    })),
+                    messages: apiMessages,
                 }),
             })
 

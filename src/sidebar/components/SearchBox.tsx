@@ -24,8 +24,17 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
     const [query, setQuery] = useState('')
     const [showModelMenu, setShowModelMenu] = useState(false)
     const menuRef = useRef<HTMLDivElement>(null)
+    const textareaRef = useRef<HTMLTextAreaElement>(null)
 
     const currentModel = MODELS.find((m) => m.id === selectedModel) || MODELS[0]
+
+    // Auto-resize textarea
+    const autoResize = () => {
+        const el = textareaRef.current
+        if (!el) return
+        el.style.height = 'auto'
+        el.style.height = `${el.scrollHeight}px`
+    }
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -45,6 +54,10 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
         if (!trimmed || isLoading) return
         onSend(trimmed)
         setQuery('')
+        // Reset textarea height
+        if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto'
+        }
     }
 
     const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -58,10 +71,14 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
         <div className="search-box">
             <div className="search-input-area">
                 <textarea
+                    ref={textareaRef}
                     className="search-textarea"
                     placeholder="Ask anything..."
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(e) => {
+                        setQuery(e.target.value)
+                        autoResize()
+                    }}
                     onKeyDown={handleKeyDown}
                     rows={1}
                 />

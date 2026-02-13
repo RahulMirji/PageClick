@@ -1,5 +1,5 @@
 /* ============================================
-   PageClick Sidebar — Dark Theme Styles
+   PageClick Sidebar — Light Theme Styles
    ============================================ */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -11,22 +11,22 @@
 }
 
 :root {
-  --bg-primary: #191a1a;
-  --bg-secondary: #1e1f20;
-  --bg-tertiary: #2a2b2d;
-  --bg-elevated: #2f3133;
-  --text-primary: #e8eaed;
-  --text-secondary: #9aa0a6;
-  --text-muted: #6b7280;
-  --accent: #20b8cd;
-  --accent-hover: #17a0b5;
-  --border-color: #3c4043;
-  --border-subtle: #313335;
-  --search-bg: #303134;
-  --card-bg: #2a2b2d;
-  --pro-gradient: linear-gradient(135deg, #20b8cd, #0ea5e9);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9f9f9;
+  --bg-tertiary: #f0f0f0;
+  --bg-elevated: #ececec;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b6b6b;
+  --text-muted: #999999;
+  --accent: #1a1a1a;
+  --accent-hover: #333333;
+  --border-color: #e5e5e5;
+  --border-subtle: #eeeeee;
+  --search-bg: #f5f5f5;
+  --card-bg: #f7f7f7;
+  --pro-gradient: linear-gradient(135deg, #1a1a1a, #444444);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -72,6 +72,10 @@ body {
   padding: 16px 16px 0;
   display: flex;
   flex-direction: column;
+  scrollbar-width: none;
+}
+
+.main-content:hover {
   scrollbar-width: thin;
   scrollbar-color: var(--bg-tertiary) transparent;
 }
@@ -80,13 +84,14 @@ body {
   width: 4px;
 }
 
-.main-content::-webkit-scrollbar-track {
+.main-content::-webkit-scrollbar-thumb {
   background: transparent;
+  border-radius: 4px;
+  transition: background 0.3s;
 }
 
-.main-content::-webkit-scrollbar-thumb {
+.main-content:hover::-webkit-scrollbar-thumb {
   background: var(--bg-tertiary);
-  border-radius: 4px;
 }
 
 /* ============================================
@@ -252,7 +257,8 @@ body {
   outline: none;
   line-height: 1.5;
   min-height: 24px;
-  max-height: 120px;
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 .search-textarea::placeholder {
@@ -351,7 +357,7 @@ body {
   background: var(--bg-elevated);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   padding: 4px;
   z-index: 100;
   animation: dropdownFadeIn 0.15s ease;
@@ -388,7 +394,7 @@ body {
 }
 
 .model-option:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.05);
   color: var(--text-primary);
 }
 
@@ -573,21 +579,39 @@ body {
 }
 
 /* ============================================
-   Chat View
+   Chat View — Clean Professional Style
    ============================================ */
 
 .chat-view {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding-bottom: 12px;
+  gap: 24px;
+  padding-bottom: 16px;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.chat-view:hover {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-tertiary) transparent;
+}
+
+.chat-view::-webkit-scrollbar {
+  width: 4px;
+}
+
+.chat-view::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.chat-view:hover::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
 }
 
 .chat-message {
   display: flex;
-  gap: 8px;
   max-width: 100%;
 }
 
@@ -599,77 +623,105 @@ body {
   justify-content: flex-start;
 }
 
-.chat-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--bg-tertiary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent);
-  flex-shrink: 0;
-  margin-top: 2px;
+/* User Bubble — subtle, rounded, right-aligned */
+.chat-bubble.user {
+  padding: 10px 16px;
+  border-radius: 18px;
+  border-bottom-right-radius: 6px;
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 75%;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
 }
 
-.chat-bubble {
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  font-size: 13.5px;
-  line-height: 1.6;
-  max-width: 80%;
+/* Assistant Block — clean, no bubble */
+.assistant-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 90%;
+  width: 100%;
+}
+
+.assistant-text {
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--text-primary);
   word-wrap: break-word;
   white-space: pre-wrap;
 }
 
-.chat-bubble.user {
-  background: var(--accent);
-  color: white;
-  border-bottom-right-radius: 4px;
-}
-
-.chat-bubble.assistant {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border-bottom-left-radius: 4px;
-}
-
-/* Typing Indicator */
-.typing-indicator {
+/* Action Bar — share, copy, like, dislike */
+.message-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: space-between;
+  padding-top: 4px;
+}
+
+.actions-left,
+.actions-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.action-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.action-icon-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.action-icon-btn:active {
+  transform: scale(0.92);
+}
+
+/* Thinking Indicator */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
   padding: 4px 0;
 }
 
-.typing-indicator span {
-  width: 6px;
-  height: 6px;
+.thinking-dot {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--text-muted);
-  animation: typingBounce 1.4s infinite ease-in-out;
+  background: var(--accent);
+  animation: thinkingPulse 1.4s infinite ease-in-out;
 }
 
-.typing-indicator span:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.typing-indicator span:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes typingBounce {
+@keyframes thinkingPulse {
 
   0%,
-  80%,
   100% {
-    transform: scale(0.6);
-    opacity: 0.4;
+    opacity: 0.3;
+    transform: scale(0.85);
   }
 
-  40% {
-    transform: scale(1);
+  50% {
     opacity: 1;
+    transform: scale(1);
   }
 }
 
@@ -677,7 +729,7 @@ body {
 .submit-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.4);
   border-top-color: white;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
