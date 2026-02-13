@@ -1,0 +1,26 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+export default defineConfig({
+    plugins: [react()],
+    base: '',
+    build: {
+        outDir: 'dist',
+        rollupOptions: {
+            input: {
+                sidebar: resolve(__dirname, 'sidebar.html'),
+                background: resolve(__dirname, 'src/background.ts'),
+            },
+            output: {
+                entryFileNames: '[name].js',
+                chunkFileNames: 'assets/[name]-[hash].js',
+                assetFileNames: 'assets/[name]-[hash].[ext]',
+            },
+        },
+    },
+    publicDir: 'public',
+})
