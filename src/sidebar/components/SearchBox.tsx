@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, KeyboardEvent } from 'react'
+import { useState, useRef, useEffect, useCallback, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
 
 export type ModelId = 'kimi-k2.5' | 'gpt-oss-20b'
 
@@ -24,6 +24,7 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
     const [query, setQuery] = useState('')
     const [showModelMenu, setShowModelMenu] = useState(false)
     const [attachedImages, setAttachedImages] = useState<string[]>([])
+    const [isDragOver, setIsDragOver] = useState(false)
     const menuRef = useRef<HTMLDivElement>(null)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -80,14 +81,10 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
         fileInputRef.current?.click()
     }
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = e.target.files
-        if (!files) return
-
+    // Shared helper: convert image Files to base64 and append to attachedImages
+    const processFiles = useCallback((files: FileList | File[]) => {
         Array.from(files).forEach((file) => {
             if (!file.type.startsWith('image/')) return
-            // Limit to 3 images
-            if (attachedImages.length >= 3) return
 
             const reader = new FileReader()
             reader.onload = () => {
@@ -99,9 +96,49 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
             }
             reader.readAsDataURL(file)
         })
+    }, [])
 
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files
+        if (!files) return
+        processFiles(files)
         // Reset input so the same file can be re-selected
         e.target.value = ''
+    }
+
+    // Paste images from clipboard (Cmd+V / Ctrl+V)
+    const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+        const items = e.clipboardData?.files
+        if (!items || items.length === 0) return
+
+        const imageFiles = Array.from(items).filter((f) => f.type.startsWith('image/'))
+        if (imageFiles.length > 0) {
+            e.preventDefault() // prevent pasting file name as text
+            processFiles(imageFiles)
+        }
+    }
+
+    // Drag-and-drop handlers
+    const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setIsDragOver(true)
+    }
+
+    const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setIsDragOver(false)
+    }
+
+    const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setIsDragOver(false)
+
+        const files = e.dataTransfer?.files
+        if (!files || files.length === 0) return
+        processFiles(Array.from(files).filter((f) => f.type.startsWith('image/')))
     }
 
     const removeImage = (index: number) => {
@@ -109,7 +146,12 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
     }
 
     return (
-        <div className="search-box">
+        <div
+            className={`search-box ${isDragOver ? 'drag-over' : ''}`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+        >
             {/* Image preview strip */}
             {attachedImages.length > 0 && (
                 <div className="image-preview-strip">
@@ -142,6 +184,7 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
                         autoResize()
                     }}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
                     rows={1}
                 />
             </div>
