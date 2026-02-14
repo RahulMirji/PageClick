@@ -14,7 +14,7 @@ const MODELS: ModelOption[] = [
 ]
 
 interface SearchBoxProps {
-    onSend: (message: string) => void
+    onSend: (message: string, images?: string[]) => void
     isLoading: boolean
     selectedModel: ModelId
     onModelChange: (model: ModelId) => void
@@ -23,8 +23,10 @@ interface SearchBoxProps {
 function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBoxProps) {
     const [query, setQuery] = useState('')
     const [showModelMenu, setShowModelMenu] = useState(false)
+    const [attachedImages, setAttachedImages] = useState<string[]>([])
     const menuRef = useRef<HTMLDivElement>(null)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
+    const fileInputRef = useRef<HTMLInputElement>(null)
 
     const currentModel = MODELS.find((m) => m.id === selectedModel) || MODELS[0]
 
@@ -51,9 +53,16 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
 
     const handleSend = () => {
         const trimmed = query.trim()
-        if (!trimmed || isLoading) return
-        onSend(trimmed)
+        if ((!trimmed && attachedImages.length === 0) || isLoading) return
+
+        // Auto-switch to Kimi K2.5 if images are attached and model doesn't support vision
+        if (attachedImages.length > 0 && selectedModel !== 'kimi-k2.5') {
+            onModelChange('kimi-k2.5')
+        }
+
+        onSend(trimmed || 'What is in this image?', attachedImages.length > 0 ? attachedImages : undefined)
         setQuery('')
+        setAttachedImages([])
         // Reset textarea height
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto'
@@ -67,8 +76,61 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
         }
     }
 
+    const handleFileSelect = () => {
+        fileInputRef.current?.click()
+    }
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files
+        if (!files) return
+
+        Array.from(files).forEach((file) => {
+            if (!file.type.startsWith('image/')) return
+            // Limit to 3 images
+            if (attachedImages.length >= 3) return
+
+            const reader = new FileReader()
+            reader.onload = () => {
+                const base64 = reader.result as string
+                setAttachedImages((prev) => {
+                    if (prev.length >= 3) return prev
+                    return [...prev, base64]
+                })
+            }
+            reader.readAsDataURL(file)
+        })
+
+        // Reset input so the same file can be re-selected
+        e.target.value = ''
+    }
+
+    const removeImage = (index: number) => {
+        setAttachedImages((prev) => prev.filter((_, i) => i !== index))
+    }
+
     return (
         <div className="search-box">
+            {/* Image preview strip */}
+            {attachedImages.length > 0 && (
+                <div className="image-preview-strip">
+                    {attachedImages.map((img, i) => (
+                        <div key={i} className="image-preview-item">
+                            <img src={img} alt={`Attached ${i + 1}`} className="image-preview-thumb" />
+                            <button
+                                className="image-preview-remove"
+                                onClick={() => removeImage(i)}
+                                aria-label="Remove image"
+                            >
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
             <div className="search-input-area">
                 <textarea
                     ref={textareaRef}
@@ -83,9 +145,20 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
                     rows={1}
                 />
             </div>
+
+            {/* Hidden file input */}
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+            />
+
             <div className="search-actions">
                 <div className="search-actions-left">
-                    <button className="add-btn" aria-label="Add file">
+                    <button className="add-btn" aria-label="Attach image" onClick={handleFileSelect}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                             <line x1="12" y1="5" x2="12" y2="19" />
                             <line x1="5" y1="12" x2="19" y2="12" />
@@ -137,12 +210,12 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
                     </div>
                     <button
                         className={`submit-btn ${isLoading ? 'loading' : ''}`}
-                        aria-label="Submit"
-                        disabled={!query.trim() || isLoading}
+                        aria-label={isLoading ? 'Stop' : 'Submit'}
+                        disabled={!query.trim() && !isLoading && attachedImages.length === 0}
                         onClick={handleSend}
                     >
                         {isLoading ? (
-                            <div className="submit-spinner"></div>
+                            <span className="stop-icon"></span>
                         ) : (
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                 <line x1="5" y1="12" x2="19" y2="12" />

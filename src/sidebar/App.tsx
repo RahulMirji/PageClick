@@ -17,11 +17,11 @@ function App() {
     const [isLoading, setIsLoading] = useState(false)
     const [selectedModel, setSelectedModel] = useState<ModelId>('gpt-oss-20b')
 
-    const handleSend = async (text: string) => {
-        console.log("%c >>> frontend: handleSend called", "color: #20b8cd; font-weight: bold", { text });
+    const handleSend = async (text: string, images?: string[]) => {
+        console.log("%c >>> frontend: handleSend called", "color: #20b8cd; font-weight: bold", { text, imageCount: images?.length || 0 });
         const startTime = performance.now();
 
-        const userMessage: Message = { role: 'user', content: text }
+        const userMessage: Message = { role: 'user', content: text, images }
         setMessages(prev => [...prev, userMessage])
         setIsLoading(true)
 
@@ -60,7 +60,12 @@ function App() {
                                     const title = document.title || '';
                                     const metaDesc =
                                         document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
-                                    let text = document.body?.innerText || '';
+                                    // Clone body and strip PageClick-injected elements before reading text
+                                    const clone = document.body?.cloneNode(true) as HTMLElement | null;
+                                    if (clone) {
+                                        clone.querySelectorAll('[id^="__pc-"]').forEach(el => el.remove());
+                                    }
+                                    let text = clone?.innerText || '';
                                     text = text.replace(/\s+/g, ' ').trim();
                                     if (text.length > 3000) {
                                         text = text.substring(0, 3000) + '...';
@@ -92,7 +97,8 @@ function App() {
             console.log(`%c >>> frontend: page context fetched in ${((contextTime - startTime) / 1000).toFixed(2)}s`, "color: #20b8cd; font-weight: bold", pageContext);
 
             // Build the messages array for the API
-            const apiMessages: { role: string; content: string }[] = [];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const apiMessages: { role: string; content: any }[] = [];
 
             // Add page context as system message
             if (pageContext && (pageContext.url || pageContext.title)) {
@@ -116,15 +122,35 @@ function App() {
                 apiMessages.push({ role: 'system', content: parts.join('\n') });
             }
 
+            // Helper: build content payload (multimodal or plain text)
+            // Only include images for vision-capable models
+            const isVisionModel = selectedModel === 'kimi-k2.5';
+            const buildContent = (msg: Message) => {
+                if (isVisionModel && msg.images && msg.images.length > 0) {
+                    // Multimodal: array of image_url + text
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const parts: any[] = msg.images.map((dataUrl: string) => ({
+                        type: 'image_url',
+                        image_url: { url: dataUrl },
+                    }));
+                    if (msg.content) {
+                        parts.push({ type: 'text', text: msg.content });
+                    }
+                    return parts;
+                }
+                // Text-only: return plain string (strips images for non-vision models)
+                return msg.content;
+            };
+
             // Add conversation history
             for (const m of messages) {
-                apiMessages.push({ role: m.role, content: m.content });
+                apiMessages.push({ role: m.role, content: buildContent(m) });
             }
 
             // Add current user message
-            apiMessages.push({ role: userMessage.role, content: userMessage.content });
+            apiMessages.push({ role: userMessage.role, content: buildContent(userMessage) });
 
-            console.log("%c >>> frontend: API messages payload", "color: #20b8cd; font-weight: bold", apiMessages.map(m => ({ role: m.role, contentLength: m.content.length })));
+            console.log("%c >>> frontend: API messages payload", "color: #20b8cd; font-weight: bold", apiMessages.map(m => ({ role: m.role, contentType: Array.isArray(m.content) ? 'multimodal' : 'text' })));
 
             console.log("frontend: sending request to edge function (streaming)...");
             const response = await fetch(`${SUPABASE_URL}/functions/v1/chat`, {

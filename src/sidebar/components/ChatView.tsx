@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 export interface Message {
     role: 'user' | 'assistant'
     content: string
+    images?: string[]
 }
 
 interface ChatViewProps {
@@ -69,6 +70,13 @@ function ChatView({ messages, isLoading }: ChatViewProps) {
                 <div key={i} className={`chat-message ${msg.role}`}>
                     {msg.role === 'user' ? (
                         <div className="chat-bubble user">
+                            {msg.images && msg.images.length > 0 && (
+                                <div className="chat-images">
+                                    {msg.images.map((img, j) => (
+                                        <img key={j} src={img} alt={`Attached ${j + 1}`} className="chat-image-thumb" />
+                                    ))}
+                                </div>
+                            )}
                             <span>{msg.content}</span>
                         </div>
                     ) : (
