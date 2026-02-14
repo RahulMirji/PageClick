@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 export interface Message {
     role: 'user' | 'assistant'
@@ -13,15 +15,52 @@ interface ChatViewProps {
 function ChatView({ messages, isLoading }: ChatViewProps) {
     const bottomRef = useRef<HTMLDivElement>(null)
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
+    const [sharedIndex, setSharedIndex] = useState<number | null>(null)
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }, [messages, isLoading])
 
+    const stripMarkdown = (md: string): string => {
+        return md
+            .replace(/^#{1,6}\s+/gm, '')           // Remove heading hashes
+            .replace(/\*\*(.+?)\*\*/g, '$1')        // Bold **text** → text
+            .replace(/\*(.+?)\*/g, '$1')             // Italic *text* → text
+            .replace(/__(.+?)__/g, '$1')             // Bold __text__ → text
+            .replace(/_(.+?)_/g, '$1')               // Italic _text_ → text
+            .replace(/~~(.+?)~~/g, '$1')             // Strikethrough
+            .replace(/`{3}[\s\S]*?`{3}/g, (m) =>    // Code blocks → just the code
+                m.replace(/^```\w*\n?/gm, '').replace(/```$/gm, ''))
+            .replace(/`(.+?)`/g, '$1')               // Inline code `text` → text
+            .replace(/\[(.+?)\]\(.+?\)/g, '$1')      // Links [text](url) → text
+            .replace(/^[-*+]\s+/gm, '• ')            // Bullets → •
+            .replace(/^\d+\.\s+/gm, (m) => m)        // Keep numbered lists as-is
+            .replace(/^>\s?/gm, '')                   // Blockquotes
+            .replace(/^---+$/gm, '')                  // Horizontal rules
+            .replace(/\n{3,}/g, '\n\n')               // Collapse excess newlines
+            .trim()
+    }
+
     const handleCopy = (text: string, index: number) => {
-        navigator.clipboard.writeText(text)
+        navigator.clipboard.writeText(stripMarkdown(text))
         setCopiedIndex(index)
         setTimeout(() => setCopiedIndex(null), 2000)
+    }
+
+    const handleShare = async (text: string, index: number) => {
+        const plainText = stripMarkdown(text)
+        try {
+            if (navigator.share) {
+                await navigator.share({ text: plainText })
+            } else {
+                await navigator.clipboard.writeText(plainText)
+            }
+        } catch {
+            // User cancelled or share failed — fallback to copy
+            await navigator.clipboard.writeText(plainText)
+        }
+        setSharedIndex(index)
+        setTimeout(() => setSharedIndex(null), 2000)
     }
 
     return (
@@ -34,8 +73,8 @@ function ChatView({ messages, isLoading }: ChatViewProps) {
                         </div>
                     ) : (
                         <div className="assistant-block">
-                            <div className="assistant-text">
-                                <span>{msg.content}</span>
+                            <div className="assistant-text markdown-body">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                             </div>
                             {msg.content && (
                                 <div className="message-actions">
@@ -44,14 +83,21 @@ function ChatView({ messages, isLoading }: ChatViewProps) {
                                             className="action-icon-btn"
                                             aria-label="Share"
                                             title="Share"
+                                            onClick={() => handleShare(msg.content, i)}
                                         >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <circle cx="18" cy="5" r="3" />
-                                                <circle cx="6" cy="12" r="3" />
-                                                <circle cx="18" cy="19" r="3" />
-                                                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-                                                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                                            </svg>
+                                            {sharedIndex === i ? (
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                    <polyline points="20 6 9 17 4 12" />
+                                                </svg>
+                                            ) : (
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                    <circle cx="18" cy="5" r="3" />
+                                                    <circle cx="6" cy="12" r="3" />
+                                                    <circle cx="18" cy="19" r="3" />
+                                                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                                                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                                                </svg>
+                                            )}
                                         </button>
                                         <button
                                             className="action-icon-btn"

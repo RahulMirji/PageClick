@@ -4,6 +4,8 @@ import Logo from './components/Logo'
 import ChatView from './components/ChatView'
 import SearchBox from './components/SearchBox'
 import BottomNav from './components/BottomNav'
+import PageSuggestions from './components/PageSuggestions'
+import { triggerPageScan } from './utils/pageScanAnimation'
 import type { Message } from './components/ChatView'
 import type { ModelId } from './components/SearchBox'
 
@@ -22,6 +24,9 @@ function App() {
         const userMessage: Message = { role: 'user', content: text }
         setMessages(prev => [...prev, userMessage])
         setIsLoading(true)
+
+        // Fire the page scan animation — returns stop function
+        const stopScan = await triggerPageScan()
 
         try {
             // Fetch page context directly via Chrome APIs
@@ -106,6 +111,8 @@ function App() {
                 }
                 parts.push('');
                 parts.push('INSTRUCTIONS: Use the above page context to make your responses relevant to what the user is currently viewing. Be conversational and proactive — infer what the user might be trying to do based on the page they are on. Always acknowledge what you can see about their current page.');
+                parts.push('');
+                parts.push('FORMATTING: You are displayed in a narrow sidebar panel (~380px wide). Prefer bullet lists or bold headings over markdown tables for better readability. If you must use a table, keep columns to 2 max and use short cell values. Always ensure each table row is on its own line with proper | separators and a --- header row.');
                 apiMessages.push({ role: 'system', content: parts.join('\n') });
             }
 
@@ -201,6 +208,7 @@ function App() {
             ])
         } finally {
             setIsLoading(false)
+            stopScan()
         }
     }
 
@@ -218,6 +226,7 @@ function App() {
                     </div>
                 )}
                 <div className="bottom-input">
+                    {!hasMessages && <PageSuggestions onSuggestionClick={handleSend} />}
                     <SearchBox onSend={handleSend} isLoading={isLoading} selectedModel={selectedModel} onModelChange={setSelectedModel} />
                 </div>
             </main>
