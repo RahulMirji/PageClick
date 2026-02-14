@@ -3,6 +3,32 @@ import { useState } from 'react'
 function Header() {
     const [searchValue, setSearchValue] = useState('')
 
+    const handleGo = () => {
+        const trimmed = searchValue.trim()
+        if (!trimmed) return
+
+        let url = trimmed
+        // If it looks like a URL but has no protocol, add https://
+        if (!/^https?:\/\//i.test(url)) {
+            // Check if it looks like a domain (has a dot and no spaces)
+            if (/^[^\s]+\.[^\s]+$/.test(url)) {
+                url = 'https://' + url
+            } else {
+                // Not a URL — fall back to Google search
+                url = 'https://www.google.com/search?q=' + encodeURIComponent(trimmed)
+            }
+        }
+
+        chrome.tabs.create({ url })
+        setSearchValue('')
+    }
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
+            handleGo()
+        }
+    }
+
     return (
         <header className="header">
             <button className="header-home-btn" aria-label="Home">
@@ -14,13 +40,14 @@ function Header() {
             <div className="header-search">
                 <input
                     type="text"
-                    placeholder="Search"
+                    placeholder="Paste a link and hit Go"
                     value={searchValue}
                     onChange={(e) => setSearchValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
                     className="header-search-input"
                 />
             </div>
-            <button className="header-go-btn">Go</button>
+            <button className="header-go-btn" onClick={handleGo}>Go</button>
         </header>
     )
 }

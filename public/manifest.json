@@ -6,10 +6,13 @@
     "permissions": [
         "sidePanel",
         "activeTab",
-        "storage"
+        "tabs",
+        "storage",
+        "scripting"
     ],
     "host_permissions": [
-        "https://hadfgdqrmxlhrykdwdvb.supabase.co/*"
+        "https://hadfgdqrmxlhrykdwdvb.supabase.co/*",
+        "<all_urls>"
     ],
     "side_panel": {
         "default_path": "sidebar.html"
