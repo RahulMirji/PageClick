@@ -14,6 +14,7 @@ export default defineConfig({
             input: {
                 sidebar: resolve(__dirname, 'sidebar.html'),
                 background: resolve(__dirname, 'src/background.ts'),
+                content: resolve(__dirname, 'src/content/capture-dom.ts'),
             },
             output: {
                 entryFileNames: '[name].js',

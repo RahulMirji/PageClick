@@ -1,21 +1,50 @@
-import { useState } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import Header from './components/Header'
 import Logo from './components/Logo'
 import ChatView from './components/ChatView'
 import SearchBox from './components/SearchBox'
 import BottomNav from './components/BottomNav'
 import PageSuggestions from './components/PageSuggestions'
+import ConfirmDialog from './components/ConfirmDialog'
 import { triggerPageScan } from './utils/pageScanAnimation'
+import { evaluateStep, logAudit } from '../shared/safety-policy'
+import type { PolicyVerdict } from '../shared/safety-policy'
 import type { Message } from './components/ChatView'
 import type { ModelId } from './components/SearchBox'
+import type { ActionPlan, ActionStep } from '../shared/messages'
 
 const SUPABASE_URL = 'https://hadfgdqrmxlhrykdwdvb.supabase.co'
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhhZGZnZHFybXhsaHJ5a2R3ZHZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MTYzNzIsImV4cCI6MjA4NjQ5MjM3Mn0.ffIc9kL0bIeCZ50ySPX2bnhGGvz5zS4VwYANLq5E0qk'
+
+/**
+ * Attempt to repair common JSON issues from model output:
+ * - Missing commas between key-value pairs (e.g. "risk":"low"description" → "risk":"low","description")
+ * - Unescaped newlines inside strings
+ * - Trailing commas before } or ]
+ */
+function repairJson(raw: string): string {
+    let fixed = raw
+    // Fix missing comma between }{ or between "value""key"
+    fixed = fixed.replace(/"(\s*)"(\s*)(\w)/g, '",$1"$2$3')
+    // Fix missing comma between string values: "low"description → "low","description
+    fixed = fixed.replace(/"([a-z]+)"(\s*)"([a-z])/gi, '"$1",$2"$3')
+    // Fix unescaped literal newlines inside strings
+    fixed = fixed.replace(/([^\\])\n/g, '$1\\n')
+    // Fix trailing commas
+    fixed = fixed.replace(/,\s*([}\]])/g, '$1')
+    return fixed
+}
 
 function App() {
     const [messages, setMessages] = useState<Message[]>([])
     const [isLoading, setIsLoading] = useState(false)
     const [selectedModel, setSelectedModel] = useState<ModelId>('gpt-oss-20b')
+    const [pendingConfirm, setPendingConfirm] = useState<{
+        step: ActionStep
+        verdict: PolicyVerdict
+        resolve: (approved: boolean) => void
+    } | null>(null)
+    const pageUrlRef = useRef<string>('')
 
     const handleSend = async (text: string, images?: string[]) => {
         console.log("%c >>> frontend: handleSend called", "color: #20b8cd; font-weight: bold", { text, imageCount: images?.length || 0 });
@@ -29,102 +58,74 @@ function App() {
         const stopScan = await triggerPageScan()
 
         try {
-            // Fetch page context directly via Chrome APIs
-            interface PageContext { url: string; title: string; description: string; textContent: string }
-            let pageContext: PageContext | null = null;
+            // Fetch page context via message bus → background → content script
+            let snapshot: any = null;
             try {
-                const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-                const tab = tabs[0];
-                console.log("%c >>> frontend: active tab found", "color: #20b8cd", { id: tab?.id, url: tab?.url, title: tab?.title });
-
-                if (tab?.id) {
-                    const url = tab.url || '';
-                    const tabTitle = tab.title || '';
-
-                    // For restricted URLs, use tab metadata only
-                    const isRestricted =
-                        url.startsWith('chrome://') ||
-                        url.startsWith('chrome-extension://') ||
-                        url.startsWith('about:') ||
-                        url.startsWith('edge://') ||
-                        url.startsWith('brave://');
-
-                    if (isRestricted) {
-                        pageContext = { url, title: tabTitle, description: '', textContent: '' };
-                    } else {
-                        // Try executeScript for full page content
-                        try {
-                            const results = await chrome.scripting.executeScript({
-                                target: { tabId: tab.id },
-                                func: () => {
-                                    const title = document.title || '';
-                                    const metaDesc =
-                                        document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
-                                    // Clone body and strip PageClick-injected elements before reading text
-                                    const clone = document.body?.cloneNode(true) as HTMLElement | null;
-                                    if (clone) {
-                                        clone.querySelectorAll('[id^="__pc-"]').forEach(el => el.remove());
-                                    }
-                                    let text = clone?.innerText || '';
-                                    text = text.replace(/\s+/g, ' ').trim();
-                                    if (text.length > 3000) {
-                                        text = text.substring(0, 3000) + '...';
-                                    }
-                                    return {
-                                        url: window.location.href,
-                                        title,
-                                        description: metaDesc,
-                                        textContent: text,
-                                    };
-                                },
-                            });
-                            if (results?.[0]?.result) {
-                                pageContext = results[0].result as PageContext;
-                            }
-                        } catch (scriptErr) {
-                            // executeScript fails on protected pages (Chrome Web Store, etc.)
-                            // Fall back to tab metadata which is always available
-                            console.warn("frontend: executeScript blocked, falling back to tab metadata:", scriptErr);
-                            pageContext = { url, title: tabTitle, description: '', textContent: '' };
-                        }
-                    }
+                const response = await chrome.runtime.sendMessage({ type: 'CAPTURE_PAGE' });
+                console.log("%c >>> frontend: CAPTURE_PAGE response", "color: #20b8cd; font-weight: bold", response);
+                if (response?.type === 'CAPTURE_PAGE_RESULT' && response.payload) {
+                    snapshot = response.payload;
+                    pageUrlRef.current = snapshot.url || '';
                 }
             } catch (ctxErr) {
-                console.warn("frontend: failed to get page context entirely:", ctxErr);
+                console.warn("frontend: failed to get page context:", ctxErr);
             }
 
             const contextTime = performance.now();
-            console.log(`%c >>> frontend: page context fetched in ${((contextTime - startTime) / 1000).toFixed(2)}s`, "color: #20b8cd; font-weight: bold", pageContext);
+            console.log(`%c >>> frontend: page context fetched in ${((contextTime - startTime) / 1000).toFixed(2)}s`, "color: #20b8cd; font-weight: bold", snapshot);
 
             // Build the messages array for the API
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const apiMessages: { role: string; content: any }[] = [];
 
             // Add page context as system message
-            if (pageContext && (pageContext.url || pageContext.title)) {
+            if (snapshot && (snapshot.url || snapshot.title)) {
                 const parts = [
                     `You are a helpful browser assistant. The user is currently viewing a web page.`,
                     ``,
                     `PAGE CONTEXT:`,
-                    `- URL: ${pageContext.url}`,
-                    `- Page Title: ${pageContext.title}`,
+                    `- URL: ${snapshot.url}`,
+                    `- Page Title: ${snapshot.title}`,
                 ];
-                if (pageContext.description) {
-                    parts.push(`- Meta Description: ${pageContext.description}`);
+                if (snapshot.description) {
+                    parts.push(`- Meta Description: ${snapshot.description}`);
                 }
-                if (pageContext.textContent) {
-                    parts.push(`- Visible Page Content (excerpt): ${pageContext.textContent}`);
+                if (snapshot.nodes && snapshot.nodes.length > 0) {
+                    parts.push(`- Interactive Elements (${snapshot.nodes.length} found):`);
+                    // Include a compact summary of interactive elements for grounding
+                    const summary = snapshot.nodes
+                        .slice(0, 50) // top 50 most relevant
+                        .map((n: any) => {
+                            let desc = `  [${n.tag}] "${n.text}"`;
+                            if (n.attrs?.['aria-label']) desc += ` (aria: ${n.attrs['aria-label']})`;
+                            if (n.attrs?.href) desc += ` → ${n.attrs.href}`;
+                            if (n.attrs?.role) desc += ` role=${n.attrs.role}`;
+                            if (n.attrs?._redacted) desc += ` [REDACTED]`;
+                            desc += ` @ selector: ${n.path}`;
+                            return desc;
+                        })
+                        .join('\n');
+                    parts.push(summary);
+                }
+                if (snapshot.textContent) {
+                    parts.push(`- Visible Page Content (excerpt): ${snapshot.textContent}`);
                 }
                 parts.push('');
                 parts.push('INSTRUCTIONS: Use the above page context to make your responses relevant to what the user is currently viewing. Be conversational and proactive — infer what the user might be trying to do based on the page they are on. Always acknowledge what you can see about their current page.');
                 parts.push('');
                 parts.push('FORMATTING: You are displayed in a narrow sidebar panel (~380px wide). Prefer bullet lists or bold headings over markdown tables for better readability. If you must use a table, keep columns to 2 max and use short cell values. Always ensure each table row is on its own line with proper | separators and a --- header row.');
+                parts.push('');
+                parts.push('ACTION PLANS: When the user asks you to DO something on the page (click, type, navigate, fill a form, etc.), respond with your explanation AND include a machine-readable action plan block. Format:');
+                parts.push('<<<ACTION_PLAN>>>');
+                parts.push('{"explanation":"what this plan does","actions":[{"action":"click|input|scroll|extract|navigate","selector":"CSS selector from the Interactive Elements above","value":"optional input value","confidence":0.95,"risk":"low|medium|high","description":"human readable step description"}]}');
+                parts.push('<<<END_ACTION_PLAN>>>');
+                parts.push('Only include an action plan when the user explicitly asks you to perform an action. For informational questions, just respond normally.');
                 apiMessages.push({ role: 'system', content: parts.join('\n') });
             }
 
             // Helper: build content payload (multimodal or plain text)
             // Only include images for vision-capable models
-            const isVisionModel = selectedModel === 'kimi-k2.5';
+            const isVisionModel = selectedModel === 'kimi-k2.5' || selectedModel === 'llama-4-scout';
             const buildContent = (msg: Message) => {
                 if (isVisionModel && msg.images && msg.images.length > 0) {
                     // Multimodal: array of image_url + text
@@ -142,8 +143,9 @@ function App() {
                 return msg.content;
             };
 
-            // Add conversation history
-            for (const m of messages) {
+            // Add conversation history (trim to last 6 messages to avoid token limits)
+            const recentMessages = messages.slice(-6);
+            for (const m of recentMessages) {
                 apiMessages.push({ role: m.role, content: buildContent(m) });
             }
 
@@ -225,6 +227,68 @@ function App() {
             }
 
             console.log("frontend: streaming finished");
+            console.log("%c[PageClick] Raw assistant reply (last 500 chars):", "color: #ff6b35; font-weight: bold", assistantReply.slice(-500));
+
+            // Parse action plan from the completed response
+            // Also handle model typo: <<<_ACTION_PLAN>>> instead of <<<END_ACTION_PLAN>>>
+            const planMatch = assistantReply.match(/<<<ACTION_PLAN>>>\s*([\s\S]*?)\s*<<<(?:END_ACTION_PLAN|_ACTION_PLAN)>>>/);
+            console.log("%c[PageClick] Action plan regex match:", "color: #ff6b35; font-weight: bold", planMatch ? 'FOUND' : 'NOT FOUND');
+            if (planMatch) {
+                console.log("%c[PageClick] Raw plan JSON:", "color: #ff6b35", planMatch[1].trim());
+                try {
+                    const rawJson = planMatch[1].trim();
+                    let jsonToParse = rawJson;
+                    // Try raw first, then repaired
+                    let plan: ActionPlan;
+                    try {
+                        plan = JSON.parse(jsonToParse) as ActionPlan;
+                    } catch {
+                        console.warn("%c[PageClick] Raw JSON parse failed, attempting repair...", "color: #f59e0b");
+                        jsonToParse = repairJson(rawJson);
+                        console.log("%c[PageClick] Repaired JSON:", "color: #f59e0b", jsonToParse);
+                        plan = JSON.parse(jsonToParse) as ActionPlan;
+                    }
+                    console.log("%c[PageClick] Parsed action plan:", "color: #ff6b35; font-weight: bold", {
+                        explanation: plan.explanation,
+                        actionCount: plan.actions?.length || 0,
+                        actions: plan.actions?.map(a => ({ action: a.action, selector: a.selector, risk: a.risk })),
+                    });
+
+                    // Strip the action plan block from the displayed message
+                    const cleanContent = assistantReply
+                        .replace(/<<<ACTION_PLAN>>>\s*[\s\S]*?\s*<<<(?:END_ACTION_PLAN|_ACTION_PLAN)>>>/, '')
+                        .trim();
+                    setMessages(prev => {
+                        const updated = [...prev];
+                        updated[updated.length - 1] = { role: 'assistant', content: cleanContent };
+                        return updated;
+                    });
+
+                    // ── AUTO-EXECUTE all steps immediately ──
+                    if (plan.actions && plan.actions.length > 0) {
+                        console.log("%c[PageClick] Auto-executing %d actions...", "color: #34d399; font-weight: bold", plan.actions.length);
+                        const results: string[] = [];
+                        for (const step of plan.actions) {
+                            const { success, msg } = await runStep(step);
+                            results.push(msg);
+                            if (!success) break;
+                        }
+                        if (results.length > 0) {
+                            setMessages(prev => [...prev, {
+                                role: 'assistant',
+                                content: results.length === 1 ? results[0] : `**Actions:**\n\n${results.join('\n')}`,
+                            }]);
+                        }
+                    } else {
+                        console.warn("%c[PageClick] Plan has no actions!", "color: #ff6b35");
+                    }
+                } catch (parseErr) {
+                    console.error("%c[PageClick] FAILED to parse action plan JSON:", "color: #ff0000; font-weight: bold", parseErr);
+                    console.error("%c[PageClick] Raw JSON that failed:", "color: #ff0000", planMatch[1]);
+                }
+            } else {
+                console.log("%c[PageClick] No <<<ACTION_PLAN>>> block found in model response. Model may not have generated one.", "color: #ff6b35");
+            }
 
         } catch (err: any) {
             console.error("frontend: catch block triggered", err);
@@ -238,6 +302,98 @@ function App() {
         }
     }
 
+    // ── Safety-aware step execution ───────────────────────────────
+
+    const runStep = useCallback(async (step: ActionStep): Promise<{ success: boolean; msg: string }> => {
+        console.log("%c[PageClick] ┌── runStep called", "color: #34d399; font-weight: bold", {
+            action: step.action,
+            selector: step.selector,
+            value: step.value,
+            risk: step.risk,
+            description: step.description,
+            pageUrl: pageUrlRef.current,
+        })
+
+        const verdict = evaluateStep(step, pageUrlRef.current)
+        console.log("%c[PageClick] │ Safety verdict:", "color: #34d399", {
+            tier: verdict.tier,
+            reason: verdict.reason,
+            escalatedRisk: verdict.escalatedRisk,
+            originalRisk: verdict.originalRisk,
+        })
+
+        // BLOCKED
+        if (verdict.tier === 'block') {
+            console.warn("%c[PageClick] └── BLOCKED by safety policy:", "color: #ef4444; font-weight: bold", verdict.reason)
+            await logAudit({
+                timestamp: Date.now(), action: step.action, selector: step.selector,
+                url: pageUrlRef.current, verdict: 'block', reason: verdict.reason,
+                userApproved: false, result: 'blocked',
+            })
+            return { success: false, msg: `🚫 **Blocked:** ${verdict.reason}` }
+        }
+
+        // CONFIRM — show dialog and wait
+        if (verdict.tier === 'confirm') {
+            console.log("%c[PageClick] │ Showing confirmation dialog...", "color: #f59e0b")
+            const approved = await new Promise<boolean>((resolve) => {
+                setPendingConfirm({ step, verdict, resolve })
+            })
+            setPendingConfirm(null)
+            console.log("%c[PageClick] │ User decision:", "color: #f59e0b", approved ? 'APPROVED' : 'CANCELLED')
+
+            if (!approved) {
+                console.log("%c[PageClick] └── Cancelled by user", "color: #ef4444")
+                await logAudit({
+                    timestamp: Date.now(), action: step.action, selector: step.selector,
+                    url: pageUrlRef.current, verdict: 'confirm', reason: verdict.reason,
+                    userApproved: false, result: 'blocked',
+                })
+                return { success: false, msg: `⏹️ **Cancelled** by user` }
+            }
+        }
+
+        // EXECUTE
+        console.log("%c[PageClick] │ Sending EXECUTE_ACTION to background...", "color: #34d399", { type: 'EXECUTE_ACTION', step })
+        try {
+            const result = await chrome.runtime.sendMessage({ type: 'EXECUTE_ACTION', step })
+            console.log("%c[PageClick] │ EXECUTE_ACTION response:", "color: #34d399", result)
+            const r = result?.result
+            const success = !!r?.success
+            console.log("%c[PageClick] └── Result:", success ? "color: #34d399; font-weight: bold" : "color: #ef4444; font-weight: bold", {
+                success,
+                action: r?.action,
+                durationMs: r?.durationMs,
+                error: r?.error,
+                extractedData: r?.extractedData,
+            })
+            await logAudit({
+                timestamp: Date.now(), action: step.action, selector: step.selector,
+                url: pageUrlRef.current, verdict: verdict.tier, reason: verdict.reason,
+                userApproved: true, result: success ? 'success' : 'failed',
+            })
+            if (success) {
+                // After navigate, update pageUrlRef so subsequent steps use the new URL
+                if (step.action === 'navigate') {
+                    const navTarget = step.value || step.selector || ''
+                    if (navTarget) {
+                        const newUrl = navTarget.startsWith('http') ? navTarget : `https://${navTarget}`
+                        pageUrlRef.current = newUrl
+                        console.log("%c[PageClick] │ Updated pageUrlRef after navigate:", "color: #34d399", newUrl)
+                    }
+                }
+                return {
+                    success: true,
+                    msg: `✅ **${step.description || step.action}** — ${r.durationMs.toFixed(0)}ms${r.extractedData ? `\n> ${r.extractedData}` : ''}`,
+                }
+            }
+            return { success: false, msg: `❌ **${step.description || step.action}** — ${r?.error || 'Failed'}` }
+        } catch (err: any) {
+            console.error("%c[PageClick] └── EXECUTE_ACTION threw:", "color: #ef4444; font-weight: bold", err)
+            return { success: false, msg: `❌ Execution error: ${err.message}` }
+        }
+    }, [])
+
     const hasMessages = messages.length > 0
 
     return (
@@ -245,7 +401,19 @@ function App() {
             <Header />
             <main className="main-content">
                 {hasMessages ? (
-                    <ChatView messages={messages} isLoading={isLoading} />
+                    <>
+                        <ChatView messages={messages} isLoading={isLoading} />
+
+                        {/* Safety confirmation dialog */}
+                        {pendingConfirm && (
+                            <ConfirmDialog
+                                step={pendingConfirm.step}
+                                verdict={pendingConfirm.verdict}
+                                onConfirm={() => pendingConfirm.resolve(true)}
+                                onCancel={() => pendingConfirm.resolve(false)}
+                            />
+                        )}
+                    </>
                 ) : (
                     <div className="center-logo">
                         <Logo />

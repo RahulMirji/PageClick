@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
 
-export type ModelId = 'kimi-k2.5' | 'gpt-oss-20b'
+export type ModelId = 'kimi-k2.5' | 'gpt-oss-20b' | 'llama-4-scout'
 
 interface ModelOption {
     id: ModelId
@@ -11,6 +11,7 @@ interface ModelOption {
 const MODELS: ModelOption[] = [
     { id: 'kimi-k2.5', label: 'Kimi K2.5', icon: '🌙' },
     { id: 'gpt-oss-20b', label: 'GPT-OSS', icon: '⚡' },
+    { id: 'llama-4-scout', label: 'Llama 4', icon: '🦙' },
 ]
 
 interface SearchBoxProps {
@@ -56,9 +57,9 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
         const trimmed = query.trim()
         if ((!trimmed && attachedImages.length === 0) || isLoading) return
 
-        // Auto-switch to Kimi K2.5 if images are attached and model doesn't support vision
-        if (attachedImages.length > 0 && selectedModel !== 'kimi-k2.5') {
-            onModelChange('kimi-k2.5')
+        // Auto-switch to Llama 4 Scout if images are attached and model doesn't support vision
+        if (attachedImages.length > 0 && selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5') {
+            onModelChange('llama-4-scout')
         }
 
         onSend(trimmed || 'What is in this image?', attachedImages.length > 0 ? attachedImages : undefined)
@@ -83,9 +84,15 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
 
     // Shared helper: convert image Files to base64 and append to attachedImages
     const processFiles = useCallback((files: FileList | File[]) => {
-        Array.from(files).forEach((file) => {
-            if (!file.type.startsWith('image/')) return
+        const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'))
+        if (imageFiles.length === 0) return
 
+        // Auto-switch to Llama 4 Scout as soon as an image is attached
+        if (selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5') {
+            onModelChange('llama-4-scout')
+        }
+
+        imageFiles.forEach((file) => {
             const reader = new FileReader()
             reader.onload = () => {
                 const base64 = reader.result as string
@@ -96,7 +103,7 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
             }
             reader.readAsDataURL(file)
         })
-    }, [])
+    }, [selectedModel, onModelChange])
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files
