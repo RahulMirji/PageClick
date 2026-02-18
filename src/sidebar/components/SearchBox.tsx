@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
 
-export type ModelId = 'kimi-k2.5' | 'gpt-oss-20b' | 'llama-4-scout'
+export type ModelId = 'kimi-k2.5' | 'gpt-oss-20b' | 'llama-4-scout' | 'gemini-3-flash'
 
 interface ModelOption {
     id: ModelId
@@ -9,6 +9,7 @@ interface ModelOption {
 }
 
 const MODELS: ModelOption[] = [
+    { id: 'gemini-3-flash', label: 'Gemini 3 Flash', icon: '💎' },
     { id: 'kimi-k2.5', label: 'Kimi K2.5', icon: '🌙' },
     { id: 'gpt-oss-20b', label: 'GPT-OSS', icon: '⚡' },
     { id: 'llama-4-scout', label: 'Llama 4', icon: '🦙' },
@@ -57,9 +58,9 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
         const trimmed = query.trim()
         if ((!trimmed && attachedImages.length === 0) || isLoading) return
 
-        // Auto-switch to Llama 4 Scout if images are attached and model doesn't support vision
-        if (attachedImages.length > 0 && selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5') {
-            onModelChange('llama-4-scout')
+        // Auto-switch to Gemini 3 Flash if images are attached and model doesn't support vision
+        if (attachedImages.length > 0 && selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5' && selectedModel !== 'gemini-3-flash') {
+            onModelChange('gemini-3-flash')
         }
 
         onSend(trimmed || 'What is in this image?', attachedImages.length > 0 ? attachedImages : undefined)
@@ -87,9 +88,9 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
         const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'))
         if (imageFiles.length === 0) return
 
-        // Auto-switch to Llama 4 Scout as soon as an image is attached
-        if (selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5') {
-            onModelChange('llama-4-scout')
+        // Auto-switch to Gemini 3 Flash as soon as an image is attached
+        if (selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5' && selectedModel !== 'gemini-3-flash') {
+            onModelChange('gemini-3-flash')
         }
 
         imageFiles.forEach((file) => {

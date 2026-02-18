@@ -12,7 +12,7 @@ import type { ActionStep, RiskLevel } from './messages'
 
 // ── Permission tiers ──────────────────────────────────────────────
 
-export type PermissionTier = 'auto' | 'confirm' | 'block'
+export type PermissionTier = 'auto' | 'confirm' | 'checkpoint' | 'block'
 
 export interface PolicyVerdict {
     tier: PermissionTier
@@ -68,6 +68,17 @@ const CONFIRM_SELECTORS = [
     /button.*sign.?out/i,
 ]
 
+/** Selectors that trigger a task checkpoint (pause before continuing) */
+const CHECKPOINT_SELECTORS = [
+    /place.?order/i,
+    /confirm.?payment/i,
+    /pay.?now/i,
+    /complete.?purchase/i,
+    /proceed.?to.?pay/i,
+    /submit.?order/i,
+    /checkout.*confirm/i,
+]
+
 /** Action + selector combinations that escalate risk */
 const RISK_ESCALATIONS: Array<{
     action: string
@@ -96,8 +107,8 @@ const RISK_ESCALATIONS: Array<{
         {
             action: 'click',
             selectorPattern: /purchase|buy|order|checkout|pay/i,
-            escalateTo: 'high',
-            reason: 'Purchase/payment action detected',
+            escalateTo: 'medium',
+            reason: 'Purchase/payment action — requires confirmation',
         },
     ]
 
@@ -138,7 +149,19 @@ export function evaluateStep(step: ActionStep, pageUrl?: string): PolicyVerdict 
         }
     }
 
-    // 3. Check if selector requires confirmation
+    // 3. Check if this is a checkpoint action (payment/order confirmation)
+    for (const pattern of CHECKPOINT_SELECTORS) {
+        if (pattern.test(step.selector) || (step.description && pattern.test(step.description))) {
+            return {
+                tier: 'checkpoint',
+                reason: `Payment/order checkpoint: matches "${pattern.source}"`,
+                escalatedRisk: 'high',
+                originalRisk: step.risk,
+            }
+        }
+    }
+
+    // 4. Check if selector requires confirmation
     for (const pattern of CONFIRM_SELECTORS) {
         if (pattern.test(step.selector) || (step.description && pattern.test(step.description))) {
             return {
@@ -150,7 +173,7 @@ export function evaluateStep(step: ActionStep, pageUrl?: string): PolicyVerdict 
         }
     }
 
-    // 4. Risk escalation rules
+    // 5. Risk escalation rules
     for (const rule of RISK_ESCALATIONS) {
         if (step.action === rule.action) {
             const target = `${step.selector} ${step.description || ''} ${step.value || ''}`
@@ -169,7 +192,7 @@ export function evaluateStep(step: ActionStep, pageUrl?: string): PolicyVerdict 
         }
     }
 
-    // 5. Default tier based on model-declared risk
+    // 6. Default tier based on model-declared risk
     switch (step.risk) {
         case 'high':
             return { tier: 'confirm', reason: 'High risk action', originalRisk: step.risk }
@@ -250,4 +273,11 @@ export async function getAuditLog(): Promise<AuditEntry[]> {
     } catch {
         return []
     }
+}
+
+// ── Checkpoint detection helper ───────────────────────────────────
+
+export function isCheckpointAction(step: ActionStep, pageUrl?: string): boolean {
+    const verdict = evaluateStep(step, pageUrl)
+    return verdict.tier === 'checkpoint'
 }

@@ -1557,3 +1557,186 @@ body {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ============================================
+   Task Progress Card
+   ============================================ */
+
+.task-progress-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  animation: taskCardSlideIn 0.3s ease-out;
+  margin-top: 8px;
+}
+
+.task-progress-card.done {
+  border-color: #c3e6c3;
+}
+
+.task-progress-card.has-error {
+  border-color: #f5c6c6;
+}
+
+@keyframes taskCardSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Header */
+.task-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 8px;
+}
+
+.task-progress-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.task-progress-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+/* Timeline */
+.task-progress-timeline {
+  padding: 4px 14px 10px;
+}
+
+.task-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.task-step-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 20px;
+}
+
+/* Status dots */
+.task-step-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.25s ease;
+}
+
+.task-step-dot.completed {
+  background: #22c55e;
+  color: white;
+}
+
+.task-step-dot.running {
+  background: #3b82f6;
+  color: white;
+}
+
+.task-step-dot.pending {
+  background: var(--bg-tertiary);
+  border: 1.5px solid var(--border-color);
+}
+
+.task-step-dot.failed {
+  background: #ef4444;
+  color: white;
+}
+
+.task-step-icon-text {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Spinner for running */
+.task-step-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: taskSpinner 0.7s linear infinite;
+}
+
+@keyframes taskSpinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Connector line */
+.task-step-line {
+  width: 2px;
+  flex: 1;
+  min-height: 8px;
+  background: var(--border-color);
+  transition: background 0.3s ease;
+}
+
+.task-step-line.filled {
+  background: #22c55e;
+}
+
+/* Step label */
+.task-step-label {
+  font-size: 12.5px;
+  line-height: 20px;
+  color: var(--text-primary);
+  padding-bottom: 8px;
+}
+
+.task-step-completed .task-step-label {
+  color: var(--text-secondary);
+}
+
+.task-step-running .task-step-label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.task-step-pending .task-step-label {
+  color: var(--text-muted);
+}
+
+.task-step-failed .task-step-label {
+  color: #ef4444;
+}
+
+/* Progress bar */
+.task-progress-bar-container {
+  height: 3px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.task-progress-bar-fill {
+  height: 100%;
+  background: #22c55e;
+  transition: width 0.4s ease;
+  border-radius: 0 3px 3px 0;
+}
+
+.task-progress-bar-fill.error {
+  background: #ef4444;
+}

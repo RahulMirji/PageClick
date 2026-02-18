@@ -71,6 +71,37 @@ export interface ExecuteActionRequest {
     tabId?: number
 }
 
+export interface WaitForPageLoadRequest {
+    type: 'WAIT_FOR_PAGE_LOAD'
+    timeoutMs?: number
+}
+
+export interface WaitForPageLoadResponse {
+    type: 'WAIT_FOR_PAGE_LOAD_RESULT'
+    success: boolean
+    url?: string
+    error?: string
+}
+
+// --- Agentic Response Block Types ---
+
+export type TaskPhase = 'idle' | 'clarifying' | 'executing' | 'observing' | 'checkpoint' | 'completed' | 'error'
+
+export interface AskUserBlock {
+    questions: string[]
+}
+
+export interface CheckpointBlock {
+    reason: string
+    message: string
+    canSkip: boolean
+}
+
+export interface TaskCompleteBlock {
+    summary: string
+    nextSteps: string[]
+}
+
 // --- Page Snapshot Types ---
 
 export interface DOMNode {

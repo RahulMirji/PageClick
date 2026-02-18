@@ -43,6 +43,12 @@ chrome.runtime.onMessage.addListener(
             forwardToActiveTab(message, sendResponse)
             return true
         }
+
+        // WAIT_FOR_PAGE_LOAD — wait for the active tab to finish loading
+        if (message.type === 'WAIT_FOR_PAGE_LOAD') {
+            handleWaitForPageLoad(message.timeoutMs || 10000, sendResponse)
+            return true
+        }
     }
 )
 
@@ -238,6 +244,74 @@ async function handleNavigateAction(
                 success: false, action: 'navigate', selector: step.selector || '',
                 error: err.message || 'Navigation failed', durationMs: Date.now() - start,
             },
+        })
+    }
+}
+
+async function handleWaitForPageLoad(
+    timeoutMs: number,
+    sendResponse: (response: any) => void
+) {
+    try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+        const tab = tabs[0]
+        if (!tab?.id) {
+            sendResponse({ type: 'WAIT_FOR_PAGE_LOAD_RESULT', success: false, error: 'No active tab' })
+            return
+        }
+
+        // If already loaded, return immediately
+        if (tab.status === 'complete') {
+            // Wait a brief moment for any JS frameworks to initialize
+            setTimeout(() => {
+                sendResponse({
+                    type: 'WAIT_FOR_PAGE_LOAD_RESULT',
+                    success: true,
+                    url: tab.url,
+                })
+            }, 800)
+            return
+        }
+
+        // Otherwise, listen for the tab to finish loading
+        let resolved = false
+
+        const onUpdated = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+            if (tabId === tab.id && changeInfo.status === 'complete' && !resolved) {
+                resolved = true
+                chrome.tabs.onUpdated.removeListener(onUpdated)
+                // Again, brief wait for JS initialization
+                setTimeout(async () => {
+                    const updatedTabs = await chrome.tabs.query({ active: true, currentWindow: true })
+                    sendResponse({
+                        type: 'WAIT_FOR_PAGE_LOAD_RESULT',
+                        success: true,
+                        url: updatedTabs[0]?.url,
+                    })
+                }, 800)
+            }
+        }
+
+        chrome.tabs.onUpdated.addListener(onUpdated)
+
+        // Timeout fallback
+        setTimeout(() => {
+            if (!resolved) {
+                resolved = true
+                chrome.tabs.onUpdated.removeListener(onUpdated)
+                sendResponse({
+                    type: 'WAIT_FOR_PAGE_LOAD_RESULT',
+                    success: true,
+                    url: tab.url,
+                })
+            }
+        }, timeoutMs)
+    } catch (err: any) {
+        console.error('[PageClick:BG] WAIT_FOR_PAGE_LOAD failed:', err)
+        sendResponse({
+            type: 'WAIT_FOR_PAGE_LOAD_RESULT',
+            success: false,
+            error: err.message || 'Wait failed',
         })
     }
 }
