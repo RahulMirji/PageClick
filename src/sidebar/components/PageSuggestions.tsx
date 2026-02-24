@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getPageSuggestions, type PageSuggestionsData } from '../utils/getPageSuggestions'
+import { getPageSuggestions, getPageSuggestionsAI, type PageSuggestionsData } from '../utils/getPageSuggestions'
 
 interface PageSuggestionsProps {
     onSuggestionClick: (text: string) => void
@@ -15,8 +15,18 @@ function PageSuggestions({ onSuggestionClick }: PageSuggestionsProps) {
             const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
             const tab = tabs[0]
             if (tab?.url && tab?.title) {
-                const result = getPageSuggestions(tab.url, tab.title)
-                setData(result)
+                // Show hardcoded suggestions instantly
+                const instant = getPageSuggestions(tab.url, tab.title)
+                setData(instant)
+                setIsLoading(false)
+
+                // Then try AI-powered suggestions in background
+                getPageSuggestionsAI(tab.url, tab.title)
+                    .then((aiResult) => {
+                        if (aiResult) setData(aiResult)
+                    })
+                    .catch(() => { /* keep fallback */ })
+                return
             } else {
                 setData(null)
             }

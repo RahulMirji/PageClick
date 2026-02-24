@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
 
-export type ModelId = 'kimi-k2.5' | 'gpt-oss-20b' | 'llama-4-scout' | 'gemini-3-flash'
+export type ModelId = 'kimi-k2.5' | 'gpt-oss-20b' | 'llama-4-scout' | 'gemini-3-pro'
 
 interface ModelOption {
     id: ModelId
@@ -9,7 +9,7 @@ interface ModelOption {
 }
 
 const MODELS: ModelOption[] = [
-    { id: 'gemini-3-flash', label: 'Gemini 3 Flash', icon: '💎' },
+    { id: 'gemini-3-pro', label: 'Gemini 3 Flash', icon: '💎' },
     { id: 'kimi-k2.5', label: 'Kimi K2.5', icon: '🌙' },
     { id: 'gpt-oss-20b', label: 'GPT-OSS', icon: '⚡' },
     { id: 'llama-4-scout', label: 'Llama 4', icon: '🦙' },
@@ -17,12 +17,13 @@ const MODELS: ModelOption[] = [
 
 interface SearchBoxProps {
     onSend: (message: string, images?: string[]) => void
+    onStop?: () => void
     isLoading: boolean
     selectedModel: ModelId
     onModelChange: (model: ModelId) => void
 }
 
-function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBoxProps) {
+function SearchBox({ onSend, onStop, isLoading, selectedModel, onModelChange }: SearchBoxProps) {
     const [query, setQuery] = useState('')
     const [showModelMenu, setShowModelMenu] = useState(false)
     const [attachedImages, setAttachedImages] = useState<string[]>([])
@@ -58,9 +59,9 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
         const trimmed = query.trim()
         if ((!trimmed && attachedImages.length === 0) || isLoading) return
 
-        // Auto-switch to Gemini 3 Flash if images are attached and model doesn't support vision
-        if (attachedImages.length > 0 && selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5' && selectedModel !== 'gemini-3-flash') {
-            onModelChange('gemini-3-flash')
+        // Auto-switch to Gemini 3.1 Pro if images are attached and model doesn't support vision
+        if (attachedImages.length > 0 && selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5' && selectedModel !== 'gemini-3-pro') {
+            onModelChange('gemini-3-pro')
         }
 
         onSend(trimmed || 'What is in this image?', attachedImages.length > 0 ? attachedImages : undefined)
@@ -88,9 +89,9 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
         const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'))
         if (imageFiles.length === 0) return
 
-        // Auto-switch to Gemini 3 Flash as soon as an image is attached
-        if (selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5' && selectedModel !== 'gemini-3-flash') {
-            onModelChange('gemini-3-flash')
+        // Auto-switch to Gemini 3.1 Pro as soon as an image is attached
+        if (selectedModel !== 'llama-4-scout' && selectedModel !== 'kimi-k2.5' && selectedModel !== 'gemini-3-pro') {
+            onModelChange('gemini-3-pro')
         }
 
         imageFiles.forEach((file) => {
@@ -263,7 +264,7 @@ function SearchBox({ onSend, isLoading, selectedModel, onModelChange }: SearchBo
                         className={`submit-btn ${isLoading ? 'loading' : ''}`}
                         aria-label={isLoading ? 'Stop' : 'Submit'}
                         disabled={!query.trim() && !isLoading && attachedImages.length === 0}
-                        onClick={handleSend}
+                        onClick={isLoading && onStop ? onStop : handleSend}
                     >
                         {isLoading ? (
                             <span className="stop-icon"></span>

@@ -189,8 +189,21 @@ async function executeClick(el: Element): Promise<void> {
     scrollIntoViewIfNeeded(el)
     await new Promise((r) => setTimeout(r, 100)) // let scroll finish
 
+    // For native radio buttons and checkboxes, toggle directly
+    if (el instanceof HTMLInputElement && (el.type === 'radio' || el.type === 'checkbox')) {
+        el.focus()
+        el.click()
+        el.dispatchEvent(new Event('change', { bubbles: true }))
+        return
+    }
+
+    // For custom elements (Google Forms uses div[role="radio"], div[role="checkbox"], etc.)
+    // Dispatch a full mouse event sequence for maximum compatibility
     if (el instanceof HTMLElement) {
         el.focus()
+        // Full mouse event sequence mimics real user interaction
+        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
+        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
         el.click()
     } else {
         el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -275,6 +288,48 @@ async function executeNavigate(_el: Element, value?: string): Promise<void> {
     }
 }
 
+async function executeSelect(el: Element, value: string): Promise<void> {
+    scrollIntoViewIfNeeded(el)
+    await new Promise((r) => setTimeout(r, 100))
+
+    if (el instanceof HTMLSelectElement) {
+        // Find the option that matches by value or text
+        const options = Array.from(el.options)
+        const match = options.find(opt =>
+            opt.value.toLowerCase() === value.toLowerCase() ||
+            opt.textContent?.trim().toLowerCase() === value.toLowerCase()
+        )
+
+        if (match) {
+            el.value = match.value
+        } else {
+            // Try partial match
+            const partial = options.find(opt =>
+                opt.textContent?.trim().toLowerCase().includes(value.toLowerCase()) ||
+                opt.value.toLowerCase().includes(value.toLowerCase())
+            )
+            if (partial) {
+                el.value = partial.value
+            } else {
+                throw new Error(`Option "${value}" not found in select element`)
+            }
+        }
+
+        el.dispatchEvent(new Event('change', { bubbles: true }))
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+    } else {
+        // For custom dropdowns, try clicking the element that matches the value text
+        const items = el.querySelectorAll('[role="option"], [role="menuitem"], li, [data-value]')
+        for (const item of Array.from(items)) {
+            if (item.textContent?.trim().toLowerCase().includes(value.toLowerCase())) {
+                (item as HTMLElement).click()
+                return
+            }
+        }
+        throw new Error(`Option "${value}" not found in custom select element`)
+    }
+}
+
 // ── Main executor ─────────────────────────────────────────────────
 
 export async function executeAction(step: ActionStep): Promise<ExecutionResult> {
@@ -346,6 +401,19 @@ export async function executeAction(step: ActionStep): Promise<ExecutionResult> 
             case 'navigate':
                 console.log('%c[PageClick:CS] │ Executing NAVIGATE (content script):', 'color: #22d3ee', step.value)
                 await executeNavigate(el, step.value || (el as HTMLAnchorElement).href)
+                break
+
+            case 'select':
+                if (!step.value) {
+                    console.warn('%c[PageClick:CS] └── Select requires value!', 'color: #ef4444')
+                    return {
+                        success: false, action: step.action, selector: step.selector,
+                        error: 'Select action requires a value', durationMs: performance.now() - start,
+                    }
+                }
+                console.log('%c[PageClick:CS] │ Executing SELECT:', 'color: #22d3ee', step.value)
+                await executeSelect(el, step.value)
+                flashElement(el)
                 break
 
             default:

@@ -8,8 +8,18 @@
         "activeTab",
         "tabs",
         "storage",
-        "scripting"
+        "scripting",
+        "aiLanguageModelOriginTrial",
+        "identity"
     ],
+    "oauth2": {
+        "client_id": "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+        "scopes": [
+            "openid",
+            "email",
+            "profile"
+        ]
+    },
     "host_permissions": [
         "https://hadfgdqrmxlhrykdwdvb.supabase.co/*",
         "<all_urls>"

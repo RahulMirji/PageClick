@@ -55,7 +55,7 @@ function buildPageContext(snapshot: PageSnapshot | null): string {
     return parts.join('\n')
 }
 
-// ── Clarification prompt ─────────────────────────────────────────
+// ── Plan prompt (replaces old clarification prompt) ──────────────
 
 export function buildClarificationPrompt(
     goal: string,
@@ -69,30 +69,28 @@ ${buildPageContext(snapshot)}
 
 ${FORMATTING_RULES}
 
-YOUR JOB RIGHT NOW: Ask the user clarifying questions BEFORE taking any action. You need to gather enough information to plan the task effectively.
+YOUR JOB RIGHT NOW: Generate a CONCISE PLAN (1-2 sentences) of what you will do to accomplish the user's goal. The user will see your plan and can either PROCEED or CANCEL.
 
-For a shopping task, consider asking about:
-- Which website/store to use (Amazon, Flipkart, Best Buy, etc.)
-- Budget range (min-max)
-- Brand preference
-- Specific features or requirements
-- Size/color/variant preferences
+IMPORTANT RULES:
+- Do NOT ask clarifying questions. Just use whichever account, website, or page is currently active/logged in.
+- If the user says "open my Gmail" — just navigate to Gmail. Don't ask which account.
+- If the user says "find my email" — just go look. Don't ask when or which folder.
+- Be action-oriented: describe WHAT you will do, not what you need to know.
+- Keep it to 1-2 sentences max.
 
-For other tasks, ask whatever is relevant.
+ONLY ask questions (via ASK_USER) if the task is genuinely IMPOSSIBLE without user input — for example, "Buy me a laptop" with no indication of which website, budget, or specs. Even then, keep questions to 2-3 max.
 
-Keep questions concise (3-5 questions max). Don't ask obvious things.
-
-Respond with your friendly message AND include a structured block:
-
-<<<ASK_USER>>>
-{"questions":["Question 1?","Question 2?","Question 3?"]}
-<<<END_ASK_USER>>>
-
-If the user's request is already specific enough (e.g., "Navigate to amazon.com"), skip questions and respond with:
+RESPONSE FORMAT — always prefer TASK_READY:
 
 <<<TASK_READY>>>
-{"ready":true,"summary":"Brief summary of what you'll do"}
+{"ready":true,"summary":"I'll navigate to Gmail and search for your Chrome Web Store submission email."}
 <<<END_TASK_READY>>>
+
+Only if truly stuck:
+
+<<<ASK_USER>>>
+{"questions":["What's your budget range?","Any brand preference?"]}
+<<<END_ASK_USER>>>
 `
 }
 

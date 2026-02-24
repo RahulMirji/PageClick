@@ -1,13 +1,21 @@
-import { useState } from 'react'
+import type { ReactNode } from 'react'
 
-const navItems = [
+export type TabId = 'home' | 'discover' | 'history' | 'profile'
+
+interface NavItemDef {
+    id: TabId
+    label: string
+    icon: ReactNode
+}
+
+const navItems: NavItemDef[] = [
     {
         id: 'home',
         label: 'Home',
         icon: (
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8" />
-                <path d="M11 8a3 3 0 1 0 0 6" />
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
         ),
     },
@@ -43,16 +51,19 @@ const navItems = [
     },
 ]
 
-function BottomNav() {
-    const [active, setActive] = useState('home')
+interface BottomNavProps {
+    activeTab: TabId
+    onTabChange: (tab: TabId) => void
+}
 
+function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
     return (
         <nav className="bottom-nav">
             {navItems.map((item) => (
                 <button
                     key={item.id}
-                    className={`nav-item ${active === item.id ? 'active' : ''}`}
-                    onClick={() => setActive(item.id)}
+                    className={`nav-item ${activeTab === item.id ? 'active' : ''}`}
+                    onClick={() => onTabChange(item.id)}
                 >
                     <span className="nav-icon">{item.icon}</span>
                     <span className="nav-label">{item.label}</span>

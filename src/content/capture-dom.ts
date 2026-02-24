@@ -186,8 +186,32 @@ function captureDOM(): DOMNode[] {
                 } else {
                     // Send type + placeholder but NOT the value
                     attrs.type = (el as HTMLInputElement).type || 'text'
+                    // Include checked state for radio/checkbox
+                    if (el instanceof HTMLInputElement && (el.type === 'radio' || el.type === 'checkbox')) {
+                        attrs.checked = el.checked ? 'true' : 'false'
+                    }
+                    // Include current value for text fields so AI knows what's already filled
+                    if (el instanceof HTMLInputElement && !['password', 'hidden'].includes(el.type) && el.value) {
+                        attrs.value = el.value.substring(0, 100)
+                    }
+                    if (el instanceof HTMLTextAreaElement && el.value) {
+                        attrs.value = el.value.substring(0, 100)
+                    }
                 }
             }
+
+            // Handle select elements: include current value and options
+            if (el instanceof HTMLSelectElement) {
+                const selectedOpt = el.options[el.selectedIndex]
+                if (selectedOpt) attrs.value = selectedOpt.text.substring(0, 80)
+                // Include available options (up to 10)
+                const optTexts = Array.from(el.options).slice(0, 10).map(o => o.text.trim())
+                attrs.options = optTexts.join(' | ')
+            }
+
+            // Include aria-checked for custom radio/checkbox elements (e.g., Google Forms)
+            const ariaChecked = el.getAttribute('aria-checked')
+            if (ariaChecked) attrs['aria-checked'] = ariaChecked
 
             // Get visible text (truncated)
             let text = ''

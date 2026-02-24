@@ -3,7 +3,9 @@ import Header from './components/Header'
 import Logo from './components/Logo'
 import ChatView from './components/ChatView'
 import SearchBox from './components/SearchBox'
-import BottomNav from './components/BottomNav'
+import BottomNav, { type TabId } from './components/BottomNav'
+import HistoryView from './components/HistoryView'
+import ProfileView from './components/ProfileView'
 import PageSuggestions from './components/PageSuggestions'
 import ConfirmDialog from './components/ConfirmDialog'
 import { triggerPageScan } from './utils/pageScanAnimation'
@@ -13,7 +15,25 @@ import type { Message } from './components/ChatView'
 import type { ModelId } from './components/SearchBox'
 import type { ActionStep, CheckpointBlock, PageSnapshot } from '../shared/messages'
 import type { TaskProgress } from './components/TaskProgressCard'
+import type { PlanConfirmData } from './components/TaskPlanConfirm'
 import { TaskOrchestrator, type TaskState } from './utils/taskOrchestrator'
+import AuthGate from './components/AuthGate'
+import {
+    getUser,
+    getRequestCount,
+    incrementRequestCount,
+    signInWithGoogle,
+    signOut as authSignOut,
+    onAuthStateChange,
+    FREE_REQUEST_LIMIT,
+    type User,
+} from './utils/auth'
+import {
+    createConversation,
+    loadMessages,
+    saveMessage,
+    encodeMessageContent,
+} from './utils/conversationStore'
 import {
     buildClarificationPrompt,
     buildExecutionPrompt,
@@ -26,14 +46,33 @@ import {
     parseTaskComplete,
 } from './utils/agentPrompt'
 
-const SUPABASE_URL = 'https://hadfgdqrmxlhrykdwdvb.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhhZGZnZHFybXhsaHJ5a2R3ZHZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MTYzNzIsImV4cCI6MjA4NjQ5MjM3Mn0.ffIc9kL0bIeCZ50ySPX2bnhGGvz5zS4VwYANLq5E0qk'
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
 
+/**
+ * Remove all <<<TAG>>>...<<<END_TAG>>> structured blocks from a message.
+ * These are internal agent protocol blocks not meant for human reading.
+ */
+function stripStructuredBlocks(text: string): string {
+    return text
+        .replace(/<<<[A-Z_]+>>>.*?<<<END_[A-Z_]+>>>/gs, '') // Remove tagged blocks
+        .replace(/<<<[A-Z_]+>>>/g, '')                       // Remove orphaned opening tags
+        .trim()
+}
 function App() {
     const [messages, setMessages] = useState<Message[]>([])
     const [isLoading, setIsLoading] = useState(false)
-    const [selectedModel, setSelectedModel] = useState<ModelId>('gemini-3-flash')
+    const [selectedModel, setSelectedModel] = useState<ModelId>('gemini-3-pro')
     const [taskState, setTaskState] = useState<TaskState | null>(null)
+
+    // Auth state
+    const [user, setUser] = useState<User | null>(null)
+    const [requestCount, setRequestCount] = useState(0)
+    const [showAuthGate, setShowAuthGate] = useState(false)
+
+    // Tab + conversation state
+    const [activeTab, setActiveTab] = useState<TabId>('home')
+    const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
 
     // Safety verification state
     const [pendingConfirm, setPendingConfirm] = useState<{
@@ -51,17 +90,56 @@ function App() {
     const orchestratorRef = useRef<TaskOrchestrator>(new TaskOrchestrator())
     const pageUrlRef = useRef<string>('')
     const stopScanRef = useRef<(() => void) | null>(null)
+    const abortRef = useRef<AbortController | null>(null)
+    const messagesRef = useRef<Message[]>([])
 
-    /** Update taskProgress on the last assistant message */
-    const updateLastMessageProgress = useCallback((progress: TaskProgress) => {
+    // Persistent progress tracking across all loop iterations
+    const progressMsgIndexRef = useRef<number>(-1)
+    const accumulatedProgressRef = useRef<TaskProgress>({
+        explanation: '',
+        steps: [],
+    })
+
+    /** Reset progress tracking for a new task */
+    const resetProgressTracking = useCallback(() => {
+        progressMsgIndexRef.current = -1
+        accumulatedProgressRef.current = { explanation: '', steps: [] }
+    }, [])
+
+    /** Update the single persistent progress card */
+    const updateProgress = useCallback((progress: TaskProgress) => {
+        const msgIndex = progressMsgIndexRef.current
+        if (msgIndex < 0) return
+
         setMessages(prev => {
             const next = [...prev]
-            const last = next[next.length - 1]
-            if (last && last.role === 'assistant') {
-                last.taskProgress = { ...progress }
+            if (next[msgIndex] && next[msgIndex].role === 'assistant') {
+                next[msgIndex].taskProgress = { ...progress, steps: [...progress.steps] }
             }
             return next
         })
+    }, [])
+
+    /** Set plan confirm on a specific message */
+    const updatePlanConfirm = useCallback((msgIndex: number, planConfirm: PlanConfirmData) => {
+        setMessages(prev => {
+            const next = [...prev]
+            if (next[msgIndex]) {
+                next[msgIndex].planConfirm = planConfirm
+            }
+            return next
+        })
+    }, [])
+
+    // Load auth state on mount + subscribe to auth changes
+    useEffect(() => {
+        getUser().then(u => setUser(u))
+        getRequestCount().then(c => setRequestCount(c))
+
+        const unsub = onAuthStateChange((u) => {
+            setUser(u)
+        })
+        return unsub
     }, [])
 
     // Subscribe to orchestrator updates
@@ -71,10 +149,17 @@ function App() {
         })
     }, [])
 
+    // Keep messagesRef always in sync with messages state
+    useEffect(() => {
+        messagesRef.current = messages
+    }, [messages])
+
     const callModel = async (systemPrompt: string, userMessage?: string, images?: string[]) => {
+        // Use messagesRef.current (always up-to-date) instead of stale closure `messages`
+        const currentMessages = messagesRef.current
         const apiMessages = [
             { role: 'system', content: systemPrompt },
-            ...messages.slice(-10).map(m => ({
+            ...currentMessages.slice(-10).map(m => ({
                 role: m.role,
                 content: m.role === 'user' && m.images ?
                     [...m.images.map(url => ({ type: 'image_url', image_url: { url } })), { type: 'text', text: m.content }]
@@ -102,9 +187,19 @@ function App() {
                 model: selectedModel,
                 messages: apiMessages,
             }),
+            signal: abortRef.current?.signal,
         })
 
-        if (!response.ok) throw new Error(`API error: ${response.status}`)
+        if (!response.ok) {
+            // Try to extract a meaningful error message
+            let errorDetail = `API error: ${response.status}`
+            try {
+                const errBody = await response.text()
+                const parsed = JSON.parse(errBody)
+                if (parsed.error) errorDetail = typeof parsed.error === 'string' ? parsed.error : parsed.error.message || errorDetail
+            } catch { /* use default */ }
+            throw new Error(errorDetail)
+        }
         return response
     }
 
@@ -126,18 +221,108 @@ function App() {
         await chrome.runtime.sendMessage({ type: 'WAIT_FOR_PAGE_LOAD', timeoutMs: 8000 })
     }
 
+    const handleStop = useCallback(() => {
+        // Abort in-flight fetch
+        abortRef.current?.abort()
+        abortRef.current = null
+        // Abort orchestrator
+        orchestratorRef.current.abort('Stopped by user')
+        // Stop animation
+        stopScanRef.current?.()
+        stopScanRef.current = null
+        // Reset loading
+        setIsLoading(false)
+    }, [])
+
+    const handleSignIn = async () => {
+        const u = await signInWithGoogle()
+        setUser(u)
+        setShowAuthGate(false)
+    }
+
+    const handleSignOut = async () => {
+        await authSignOut()
+        setUser(null)
+        setRequestCount(0)
+        setMessages([])
+        setCurrentConversationId(null)
+    }
+
+    const handleNewChat = async () => {
+        if (!user) {
+            const count = await getRequestCount()
+            if (count >= FREE_REQUEST_LIMIT) {
+                setShowAuthGate(true)
+                return
+            }
+        }
+        setMessages([])
+        setCurrentConversationId(null)
+        setActiveTab('home')
+    }
+
+    const handleSelectConversation = async (convId: string) => {
+        if (!user) {
+            const count = await getRequestCount()
+            if (count >= FREE_REQUEST_LIMIT) {
+                setShowAuthGate(true)
+                return
+            }
+        }
+        const msgs = await loadMessages(convId)
+        // Clean any raw structured-block text that may have been saved before the fix
+        const cleanedMsgs = msgs.map(m =>
+            m.role === 'assistant'
+                ? { ...m, content: stripStructuredBlocks(m.content) }
+                : m
+        ).filter(m => m.content.trim().length > 0 || m.planConfirm || m.taskProgress) // Keep plan/progress cards
+        setMessages(cleanedMsgs)
+        setCurrentConversationId(convId)
+        setActiveTab('home')
+    }
+
     const handleSend = async (text: string, images?: string[]) => {
         if (isLoading) return
+
+        // Auth gate: check if unauthenticated user exceeded free limit
+        if (!user) {
+            const count = await getRequestCount()
+            if (count >= FREE_REQUEST_LIMIT) {
+                setShowAuthGate(true)
+                return
+            }
+            const newCount = await incrementRequestCount()
+            setRequestCount(newCount)
+        }
+
+        // Auto-create conversation on first message
+        let convId = currentConversationId
+        if (!convId) {
+            const conv = await createConversation(text.slice(0, 100) || 'New chat')
+            convId = conv.id
+            setCurrentConversationId(convId)
+        }
+
         setIsLoading(true)
 
-        // Add user message to chat
+        // Create a fresh abort controller for this request
+        abortRef.current = new AbortController()
+
+        // Add user message to chat (update both state AND ref synchronously)
         const userMsg: Message = { role: 'user', content: text, images }
-        setMessages(prev => [...prev, userMsg])
+        setMessages(prev => {
+            const next = [...prev, userMsg]
+            messagesRef.current = next // Keep ref in sync immediately
+            return next
+        })
+
+        // Persist user message
+        saveMessage(convId, 'user', text, images).catch(console.warn)
 
         // Check if we are already in a task flow (answering clarification)
         if (orchestratorRef.current.isActive() && orchestratorRef.current.getState().phase === 'clarifying') {
             orchestratorRef.current.addClarifications({ UserResponse: text })
-            await runAgentLoop()
+            await runAgentLoop(convId)
             return
         }
 
@@ -145,22 +330,24 @@ function App() {
         const isTask = isTaskRequest(text)
 
         if (isTask) {
+            resetProgressTracking()
             orchestratorRef.current.startTask(text)
-            await runAgentLoop()
+            await runAgentLoop(convId)
         } else {
             // Info request — one-shot answer
-            await runInfoRequest(text, images)
+            await runInfoRequest(convId, text, images)
         }
     }
 
-    const runInfoRequest = async (text: string, images?: string[]) => {
+    const runInfoRequest = async (convId: string, text: string, images?: string[]) => {
         stopScanRef.current = await triggerPageScan()
         try {
             const snapshot = await capturePage()
             const prompt = buildInfoPrompt(snapshot)
             const response = await callModel(prompt, text, images)
-            await streamResponse(response)
+            await streamResponse(response, convId, false)
         } catch (err: any) {
+            if (err.name === 'AbortError') return // User stopped
             setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err.message}` }])
         } finally {
             setIsLoading(false)
@@ -168,12 +355,13 @@ function App() {
         }
     }
 
-    const runAgentLoop = async () => {
+    const runAgentLoop = async (convId: string) => {
         const orchestrator = orchestratorRef.current
         stopScanRef.current = await triggerPageScan()
 
         try {
             // Loop while active
+            let retried = false // Track if we already retried with no-plan fallback
             while (orchestrator.isActive()) {
                 const state = orchestrator.getState()
                 const snapshot = await capturePage()
@@ -189,29 +377,87 @@ function App() {
 
                 // Call model
                 const response = await callModel(prompt)
-                const fullText = await streamResponse(response) // Streams to UI and returns full text
+                const isTaskExec = state.phase === 'executing' || state.phase === 'observing'
+                const fullText = await streamResponse(response, convId, isTaskExec) // hide text during task execution
 
                 // Parse response based on phase
                 if (state.phase === 'clarifying') {
-                    const askUser = parseAskUser(fullText)
-                    if (askUser.found && askUser.block) {
-                        // AI asked questions — wait for user input
-                        // The loop pauses here until user replies via handleSend
-                        setIsLoading(false)
-                        stopScanRef.current?.()
-                        return
+                    // Check for TASK_READY first (the preferred response)
+                    const taskReady = parseTaskReady(fullText)
+                    if (taskReady.found && taskReady.block) {
+                        // Show plan with Proceed/Reject buttons
+                        // Find the current last assistant message index
+                        const currentMsgCount = await new Promise<number>(resolve => {
+                            setMessages(prev => {
+                                resolve(prev.length - 1) // Index of last message
+                                return prev
+                            })
+                        })
+
+                        // Wait for user to proceed or reject
+                        const approved = await new Promise<boolean>(resolve => {
+                            const planConfirm: PlanConfirmData = {
+                                summary: taskReady.block!.summary,
+                                status: 'pending',
+                                onProceed: () => {
+                                    // Update status to approved
+                                    updatePlanConfirm(currentMsgCount, {
+                                        ...planConfirm,
+                                        status: 'approved',
+                                    })
+                                    resolve(true)
+                                },
+                                onReject: () => {
+                                    // Update status to rejected
+                                    updatePlanConfirm(currentMsgCount, {
+                                        ...planConfirm,
+                                        status: 'rejected',
+                                    })
+                                    resolve(false)
+                                },
+                            }
+                            updatePlanConfirm(currentMsgCount, planConfirm)
+                        })
+
+                        setIsLoading(true) // Re-enable loading state
+
+                        // Save plan confirm card to history
+                        const planStatus = approved ? 'approved' : 'rejected'
+                        const planMsg: Message = {
+                            role: 'assistant',
+                            content: '',
+                            planConfirm: {
+                                summary: taskReady.block!.summary,
+                                status: planStatus as 'approved' | 'rejected',
+                                onProceed: () => { },
+                                onReject: () => { },
+                            },
+                        }
+                        saveMessage(convId, 'assistant', encodeMessageContent(planMsg)).catch(console.warn)
+
+                        if (approved) {
+                            // Set up the progress message — reuse the same message
+                            progressMsgIndexRef.current = currentMsgCount
+                            orchestrator.beginExecution()
+                            continue // Continue to execution phase
+                        } else {
+                            orchestrator.abort('Cancelled by user')
+                            const cancelMsg = 'Task cancelled. Let me know if you need anything else!'
+                            setMessages(prev => [...prev, { role: 'assistant', content: cancelMsg }])
+                            saveMessage(convId, 'assistant', cancelMsg).catch(console.warn)
+                            break
+                        }
                     }
 
-                    const taskReady = parseTaskReady(fullText)
-                    if (taskReady.found) {
-                        // AI is ready to execute
-                        orchestrator.beginExecution()
-                        continue // Loop immediately to execution phase
+                    const askUser = parseAskUser(fullText)
+                    if (askUser.found && askUser.block) {
+                        // AI asked questions (rare) — wait for user input
+                        setIsLoading(false)
+                        return
                     }
 
                     // Fallback: if AI didn't output structured block, treat as question
                     setIsLoading(false)
-                    stopScanRef.current?.()
                     return
                 }
 
@@ -239,6 +485,10 @@ function App() {
                     const complete = parseTaskComplete(fullText)
                     if (complete.found && complete.block) {
                         orchestrator.complete(complete.block)
+                        // Add completion summary as a NEW visible message at the end
+                        const summary = complete.block!.summary
+                        setMessages(prev => [...prev, { role: 'assistant', content: summary }])
+                        saveMessage(convId, 'assistant', summary).catch(console.warn)
                         break
                     }
 
@@ -247,38 +497,61 @@ function App() {
                     if (plan.found && plan.block) {
                         orchestrator.setPlan({ explanation: plan.block.explanation, actions: plan.block.actions })
 
-                        // Build initial task progress with all steps pending
-                        const taskProgress: TaskProgress = {
-                            explanation: plan.block.explanation,
-                            steps: plan.block.actions.map(a => ({
-                                description: a.description || `${a.action} on element`,
-                                status: 'pending' as const,
-                            }))
+                        // If this is the first action plan, set the progress message
+                        if (progressMsgIndexRef.current < 0) {
+                            // Find current last assistant message index
+                            const idx = await new Promise<number>(resolve => {
+                                setMessages(prev => {
+                                    resolve(prev.length - 1)
+                                    return prev
+                                })
+                            })
+                            progressMsgIndexRef.current = idx
+                            accumulatedProgressRef.current = {
+                                explanation: plan.block.explanation,
+                                steps: [],
+                            }
                         }
-                        updateLastMessageProgress(taskProgress)
+
+                        // Update explanation if it's better/newer
+                        accumulatedProgressRef.current.explanation = plan.block.explanation
+
+                        // Append new steps as pending
+                        const newStepsStart = accumulatedProgressRef.current.steps.length
+                        for (const a of plan.block.actions) {
+                            accumulatedProgressRef.current.steps.push({
+                                description: a.description || `${a.action} on element`,
+                                status: 'pending',
+                            })
+                        }
+                        updateProgress(accumulatedProgressRef.current)
 
                         // Execute steps with live progress updates
                         const results = []
                         for (let si = 0; si < plan.block.actions.length; si++) {
                             const step = plan.block.actions[si]
+                            const globalIndex = newStepsStart + si
 
                             // Mark current step as running
-                            taskProgress.steps[si].status = 'running'
-                            updateLastMessageProgress(taskProgress)
+                            accumulatedProgressRef.current.steps[globalIndex].status = 'running'
+                            updateProgress(accumulatedProgressRef.current)
 
                             const result = await executeStep(step)
                             orchestrator.recordStepResult(result)
                             results.push(result)
 
                             // Mark step as completed or failed
-                            taskProgress.steps[si].status = result.success ? 'completed' : 'failed'
-                            updateLastMessageProgress(taskProgress)
+                            accumulatedProgressRef.current.steps[globalIndex].status = result.success ? 'completed' : 'failed'
+                            updateProgress(accumulatedProgressRef.current)
 
                             if (!result.success) break // Stop on failure
 
-                            // If navigation occurred, wait for load
+                            // If navigation occurred, wait for load and re-inject animation
                             if (step.action === 'navigate') {
                                 await waitForPageLoad()
+                                // Re-inject animation on the new page
+                                stopScanRef.current?.()
+                                stopScanRef.current = await triggerPageScan()
                             }
                         }
 
@@ -293,20 +566,42 @@ function App() {
 
                         if (!cont) break // Budget exhausted
                     } else {
-                        // No plan found?
-                        console.warn('No action plan found in execution response')
+                        // No plan found — retry once with stronger instruction
+                        if (!retried) {
+                            retried = true
+                            console.warn('No action plan found, retrying with stronger instruction...')
+                            continue // One more loop iteration
+                        }
+                        // Still no plan after retry
+                        console.warn('No action plan found after retry')
                         orchestrator.abort('No plan generated')
+                        const noplanMsg = "I wasn't able to generate the right actions. Could you try rephrasing your request?"
+                        setMessages(prev => [...prev, { role: 'assistant', content: noplanMsg }])
+                        saveMessage(convId, 'assistant', noplanMsg).catch(console.warn)
                         break
                     }
                 }
             }
         } catch (err: any) {
+            if (err.name === 'AbortError') return // User stopped
             console.error('Agent loop error:', err)
             orchestrator.abort(err.message)
-            setMessages(prev => [...prev, { role: 'assistant', content: `Task error: ${err.message}` }])
+            const errMsg = `Task error: ${err.message}`
+            setMessages(prev => [...prev, { role: 'assistant', content: errMsg }])
+            saveMessage(convId, 'assistant', errMsg).catch(console.warn)
         } finally {
             setIsLoading(false)
             stopScanRef.current?.()
+
+            // Save final progress card to history if we have one
+            if (accumulatedProgressRef.current.steps.length > 0) {
+                const progressMsg: Message = {
+                    role: 'assistant',
+                    content: '',
+                    taskProgress: { ...accumulatedProgressRef.current },
+                }
+                saveMessage(convId, 'assistant', encodeMessageContent(progressMsg)).catch(console.warn)
+            }
         }
     }
 
@@ -339,14 +634,14 @@ function App() {
         }
     }, [])
 
-    const streamResponse = async (response: Response): Promise<string> => {
+    const streamResponse = async (response: Response, convId: string, hidden = false): Promise<string> => {
         const reader = response.body?.getReader()
         if (!reader) return ''
         const decoder = new TextDecoder()
         let fullText = ''
 
         // Add placeholder message
-        setMessages(prev => [...prev, { role: 'assistant', content: '' }])
+        setMessages(prev => [...prev, { role: 'assistant', content: '', hidden }])
 
         try {
             while (true) {
@@ -375,16 +670,36 @@ function App() {
         } finally {
             reader.releaseLock()
         }
-        return fullText.trim()
+
+        // Persist assistant message — strip internal blocks before saving
+        const trimmed = fullText.trim()
+        if (trimmed && !hidden && convId) {
+            const cleanText = stripStructuredBlocks(trimmed)
+            if (cleanText) saveMessage(convId, 'assistant', cleanText).catch(console.warn)
+        }
+
+        return trimmed
     }
 
     const hasMessages = messages.length > 0
 
     return (
         <div className="app">
-            <Header status={taskState?.statusMessage} />
+            <Header status={taskState?.statusMessage} user={user} onSignOut={handleSignOut} />
             <main className="main-content">
-                {hasMessages ? (
+                {activeTab === 'history' ? (
+                    <HistoryView
+                        onSelectConversation={handleSelectConversation}
+                        onNewChat={handleNewChat}
+                        currentConversationId={currentConversationId}
+                    />
+                ) : activeTab === 'profile' ? (
+                    <ProfileView
+                        user={user}
+                        onSignIn={handleSignIn}
+                        onSignOut={handleSignOut}
+                    />
+                ) : hasMessages ? (
                     <>
                         <ChatView messages={messages} isLoading={isLoading} />
                         {pendingConfirm && (
@@ -411,12 +726,28 @@ function App() {
                 ) : (
                     <div className="center-logo"><Logo /></div>
                 )}
-                <div className="bottom-input">
-                    {!hasMessages && <PageSuggestions onSuggestionClick={handleSend} />}
-                    <SearchBox onSend={handleSend} isLoading={isLoading} selectedModel={selectedModel} onModelChange={setSelectedModel} />
-                </div>
+                {activeTab !== 'history' && activeTab !== 'profile' && (
+                    <div className="bottom-input">
+                        {!hasMessages && <PageSuggestions onSuggestionClick={handleSend} />}
+                        <SearchBox onSend={handleSend} onStop={handleStop} isLoading={isLoading} selectedModel={selectedModel} onModelChange={setSelectedModel} />
+                    </div>
+                )}
             </main>
-            <BottomNav />
+            <BottomNav activeTab={activeTab} onTabChange={(tab) => {
+                if (tab === 'home') {
+                    setMessages([])
+                    setCurrentConversationId(null)
+                }
+                setActiveTab(tab)
+            }} />
+
+            {showAuthGate && (
+                <AuthGate
+                    onSignIn={handleSignIn}
+                    onDismiss={() => setShowAuthGate(false)}
+                    requestCount={requestCount}
+                />
+            )}
         </div>
     )
 }

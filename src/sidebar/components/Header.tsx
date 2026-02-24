@@ -1,11 +1,29 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import type { User } from '../utils/auth'
 
 interface HeaderProps {
     status?: string
+    user?: User | null
+    onSignOut?: () => void
 }
 
-function Header({ status }: HeaderProps) {
+function Header({ status, user, onSignOut }: HeaderProps) {
     const [searchValue, setSearchValue] = useState('')
+    const [showUserMenu, setShowUserMenu] = useState(false)
+    const menuRef = useRef<HTMLDivElement>(null)
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setShowUserMenu(false)
+            }
+        }
+        if (showUserMenu) {
+            document.addEventListener('mousedown', handleClickOutside)
+        }
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [showUserMenu])
 
     const handleGo = () => {
         const trimmed = searchValue.trim()
@@ -58,7 +76,53 @@ function Header({ status }: HeaderProps) {
                             className="header-search-input"
                         />
                     </div>
-                    <button className="header-go-btn" onClick={handleGo}>Go</button>
+                    {user ? (
+                        <div className="user-avatar-container" ref={menuRef}>
+                            <button
+                                className="user-avatar-btn"
+                                onClick={() => setShowUserMenu((prev) => !prev)}
+                                aria-label="User menu"
+                            >
+                                {user.avatar ? (
+                                    <img
+                                        src={user.avatar}
+                                        alt={user.name}
+                                        className="user-avatar"
+                                        referrerPolicy="no-referrer"
+                                    />
+                                ) : (
+                                    <div className="user-avatar-fallback">
+                                        {user.name.charAt(0).toUpperCase()}
+                                    </div>
+                                )}
+                            </button>
+                            {showUserMenu && (
+                                <div className="user-menu">
+                                    <div className="user-menu-info">
+                                        <span className="user-menu-name">{user.name}</span>
+                                        <span className="user-menu-email">{user.email}</span>
+                                    </div>
+                                    <div className="user-menu-divider" />
+                                    <button
+                                        className="user-menu-item"
+                                        onClick={() => {
+                                            setShowUserMenu(false)
+                                            onSignOut?.()
+                                        }}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                            <polyline points="16 17 21 12 16 7" />
+                                            <line x1="21" y1="12" x2="9" y2="12" />
+                                        </svg>
+                                        <span>Sign out</span>
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <button className="header-go-btn" onClick={handleGo}>Go</button>
+                    )}
                 </>
             )}
         </header>
