@@ -156,7 +156,7 @@ function ProfileView({ user, onSignIn, onSignOut }: ProfileViewProps) {
                             </svg>
                         </div>
                         <span className="profile-row-label">Version</span>
-                        <span className="profile-row-value">0.1.0</span>
+                        <span className="profile-row-value">1.0.0</span>
                     </div>
                     <button className="profile-row clickable">
                         <div className="profile-row-icon">
@@ -193,7 +193,7 @@ function ProfileView({ user, onSignIn, onSignOut }: ProfileViewProps) {
             </button>
 
             <div className="profile-footer">
-                <span>PageClick v0.1.0</span>
+                <span>PageClick v1.0.0</span>
             </div>
 
             {/* Sign Out Confirmation Overlay */}

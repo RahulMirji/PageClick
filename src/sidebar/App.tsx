@@ -5,6 +5,7 @@ import ChatView from './components/ChatView'
 import SearchBox from './components/SearchBox'
 import BottomNav, { type TabId } from './components/BottomNav'
 import HistoryView from './components/HistoryView'
+import WorkflowsView from './components/WorkflowsView'
 import ProfileView from './components/ProfileView'
 import PageSuggestions from './components/PageSuggestions'
 import ConfirmDialog from './components/ConfirmDialog'
@@ -45,6 +46,7 @@ import {
     parseCheckpoint,
     parseTaskComplete,
 } from './utils/agentPrompt'
+import { trimToContextWindow, estimateTokens } from './utils/tokenUtils'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
@@ -157,21 +159,31 @@ function App() {
     const callModel = async (systemPrompt: string, userMessage?: string, images?: string[]) => {
         // Use messagesRef.current (always up-to-date) instead of stale closure `messages`
         const currentMessages = messagesRef.current
+
+        // Build raw message list for this turn
+        const rawMessages = currentMessages.map(m => ({
+            role: m.role,
+            content: m.role === 'user' && m.images
+                ? [...m.images.map(url => ({ type: 'image_url', image_url: { url } })), { type: 'text', text: m.content }]
+                : m.content
+        }))
+
+        // Apply sliding window — drops oldest messages if over token budget
+        const { trimmed, dropped } = trimToContextWindow(rawMessages)
+        if (dropped > 0) {
+            console.info(`[PageClick] Context trimmed: dropped ${dropped} oldest messages to stay within token budget.`)
+        }
+
         const apiMessages = [
             { role: 'system', content: systemPrompt },
-            ...currentMessages.slice(-10).map(m => ({
-                role: m.role,
-                content: m.role === 'user' && m.images ?
-                    [...m.images.map(url => ({ type: 'image_url', image_url: { url } })), { type: 'text', text: m.content }]
-                    : m.content
-            }))
+            ...trimmed,
         ]
 
         if (userMessage) {
             apiMessages.push({
                 role: 'user',
-                content: images ?
-                    [...images.map(url => ({ type: 'image_url', image_url: { url } })), { type: 'text', text: userMessage }]
+                content: images
+                    ? [...images.map(url => ({ type: 'image_url', image_url: { url } })), { type: 'text', text: userMessage }]
                     : userMessage
             })
         }
@@ -671,11 +683,32 @@ function App() {
             reader.releaseLock()
         }
 
-        // Persist assistant message — strip internal blocks before saving
+        // Attach estimated token count to the last message
+        if (fullText.trim() && !hidden) {
+            const tokens = estimateTokens(fullText)
+            setMessages(prev => {
+                const next = [...prev]
+                const last = next[next.length - 1]
+                if (last && last.role === 'assistant') {
+                    last.tokenCount = tokens
+                }
+                return next
+            })
+        }
+
+        // Persist assistant message — include tokenCount so it survives history reload
         const trimmed = fullText.trim()
         if (trimmed && !hidden && convId) {
             const cleanText = stripStructuredBlocks(trimmed)
-            if (cleanText) saveMessage(convId, 'assistant', cleanText).catch(console.warn)
+            if (cleanText) {
+                const tokens = estimateTokens(fullText)
+                const encoded = encodeMessageContent({
+                    role: 'assistant',
+                    content: cleanText,
+                    tokenCount: tokens || undefined,
+                })
+                saveMessage(convId, 'assistant', encoded).catch(console.warn)
+            }
         }
 
         return trimmed
@@ -692,6 +725,13 @@ function App() {
                         onSelectConversation={handleSelectConversation}
                         onNewChat={handleNewChat}
                         currentConversationId={currentConversationId}
+                    />
+                ) : activeTab === 'workflows' ? (
+                    <WorkflowsView
+                        onRunWorkflow={(prompt) => {
+                            setActiveTab('home')
+                            handleSend(prompt)
+                        }}
                     />
                 ) : activeTab === 'profile' ? (
                     <ProfileView
@@ -726,7 +766,7 @@ function App() {
                 ) : (
                     <div className="center-logo"><Logo /></div>
                 )}
-                {activeTab !== 'history' && activeTab !== 'profile' && (
+                {activeTab !== 'history' && activeTab !== 'profile' && activeTab !== 'workflows' && (
                     <div className="bottom-input">
                         {!hasMessages && <PageSuggestions onSuggestionClick={handleSend} />}
                         <SearchBox onSend={handleSend} onStop={handleStop} isLoading={isLoading} selectedModel={selectedModel} onModelChange={setSelectedModel} />

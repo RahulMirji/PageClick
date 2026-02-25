@@ -2,8 +2,8 @@
  * Conversation Store
  *
  * CRUD operations for conversations and messages.
- * - Authenticated users: stored in Supabase (conversations + messages tables)
- * - Unauthenticated users: stored in chrome.storage.local as fallback
+ * History is only persisted for authenticated users (stored in Supabase).
+ * Unauthenticated users get ephemeral in-memory conversations that are not saved.
  */
 
 import { supabase } from './supabaseClient'
@@ -19,11 +19,6 @@ export interface Conversation {
     updatedAt: number
     preview?: string // First user message for display
 }
-
-// ── Local Storage Keys ─────────────────────────────────────────────
-
-const LOCAL_CONVERSATIONS_KEY = '__pc_conversations'
-const LOCAL_MESSAGES_PREFIX = '__pc_msgs_'
 
 // ── Conversation CRUD ──────────────────────────────────────────────
 
@@ -50,17 +45,13 @@ export async function createConversation(title: string): Promise<Conversation> {
         }
     }
 
-    // Local fallback
-    const conv: Conversation = {
+    // Not logged in — return ephemeral conversation (not persisted)
+    return {
         id: crypto.randomUUID(),
         title,
         createdAt: Date.now(),
         updatedAt: Date.now(),
     }
-    const convs = await getLocalConversations()
-    convs.unshift(conv)
-    await chrome.storage.local.set({ [LOCAL_CONVERSATIONS_KEY]: convs })
-    return conv
 }
 
 /**
@@ -89,7 +80,8 @@ export async function listConversations(): Promise<Conversation[]> {
         }))
     }
 
-    return getLocalConversations()
+    // Not logged in — no persisted history
+    return []
 }
 
 /**
@@ -107,11 +99,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
         return
     }
 
-    // Local fallback
-    const convs = await getLocalConversations()
-    const filtered = convs.filter(c => c.id !== conversationId)
-    await chrome.storage.local.set({ [LOCAL_CONVERSATIONS_KEY]: filtered })
-    await chrome.storage.local.remove(LOCAL_MESSAGES_PREFIX + conversationId)
+    // Not logged in — nothing to delete
 }
 
 // ── Metadata Encoding ──────────────────────────────────────────────
@@ -122,6 +110,7 @@ const META_PREFIX = '__PC_META__:'
 
 interface MessageMeta {
     text?: string
+    tokenCount?: number
     planConfirm?: { summary: string; status: string }
     taskProgress?: { explanation: string; steps: Array<{ description: string; status: string }> }
 }
@@ -131,6 +120,10 @@ export function encodeMessageContent(msg: Message): string {
     const meta: MessageMeta = {}
     let hasExtra = false
 
+    if (msg.tokenCount) {
+        meta.tokenCount = msg.tokenCount
+        hasExtra = true
+    }
     if (msg.planConfirm) {
         meta.planConfirm = { summary: msg.planConfirm.summary, status: msg.planConfirm.status }
         hasExtra = true
@@ -159,6 +152,9 @@ function decodeMessageContent(role: 'user' | 'assistant', content: string, image
         const meta: MessageMeta = JSON.parse(content.slice(META_PREFIX.length))
         const msg: Message = { role, content: meta.text || '', images }
 
+        if (meta.tokenCount) {
+            msg.tokenCount = meta.tokenCount
+        }
         if (meta.planConfirm) {
             msg.planConfirm = {
                 summary: meta.planConfirm.summary,
@@ -210,9 +206,8 @@ export async function loadMessages(conversationId: string): Promise<Message[]> {
         ))
     }
 
-    // Local fallback
-    const raw = await getLocalMessages(conversationId)
-    return raw.map(m => decodeMessageContent(m.role, m.content, m.images))
+    // Not logged in — no persisted messages
+    return []
 }
 
 /**
@@ -261,40 +256,6 @@ export async function saveMessage(
         return
     }
 
-    // Local fallback
-    const msgs = await getLocalMessages(conversationId)
-    msgs.push({ role, content, images })
-    await chrome.storage.local.set({ [LOCAL_MESSAGES_PREFIX + conversationId]: msgs })
-
-    // Update local conversation
-    const convs = await getLocalConversations()
-    const conv = convs.find(c => c.id === conversationId)
-    if (conv) {
-        conv.updatedAt = Date.now()
-        if (role === 'user' && conv.title === 'New chat') {
-            conv.title = content.slice(0, 100)
-        }
-        await chrome.storage.local.set({ [LOCAL_CONVERSATIONS_KEY]: convs })
-    }
+    // Not logged in — don't persist messages
 }
 
-// ── Local Storage Helpers ──────────────────────────────────────────
-
-async function getLocalConversations(): Promise<Conversation[]> {
-    try {
-        const result = await chrome.storage.local.get(LOCAL_CONVERSATIONS_KEY)
-        return result[LOCAL_CONVERSATIONS_KEY] || []
-    } catch {
-        return []
-    }
-}
-
-async function getLocalMessages(conversationId: string): Promise<Message[]> {
-    try {
-        const key = LOCAL_MESSAGES_PREFIX + conversationId
-        const result = await chrome.storage.local.get(key)
-        return result[key] || []
-    } catch {
-        return []
-    }
-}

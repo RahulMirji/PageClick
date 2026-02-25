@@ -1,15 +1,15 @@
 {
     "manifest_version": 3,
     "name": "PageClick",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "description": "AI-powered sidebar assistant that understands pages and suggests safe actions.",
+    "incognito": "spanning",
     "permissions": [
         "sidePanel",
         "activeTab",
         "tabs",
         "storage",
         "scripting",
-        "aiLanguageModelOriginTrial",
         "identity"
     ],
     "oauth2": {
@@ -22,11 +22,22 @@
     },
     "host_permissions": [
         "https://hadfgdqrmxlhrykdwdvb.supabase.co/*",
-        "<all_urls>"
+        "<all_urls>",
+        "file://*/*"
     ],
+    "commands": {
+        "_execute_side_panel": {
+            "suggested_key": {
+                "default": "Ctrl+Shift+P",
+                "mac": "Command+Shift+P"
+            },
+            "description": "Open PageClick side panel"
+        }
+    },
     "side_panel": {
         "default_path": "sidebar.html"
     },
+    "options_page": "options.html",
     "background": {
         "service_worker": "background.js",
         "type": "module"

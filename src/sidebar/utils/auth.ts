@@ -28,26 +28,35 @@ const STORAGE_KEY_REQUEST_COUNT = '__pc_request_count'
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 
-// ── Request Counting ───────────────────────────────────────────────
+// ── Request Counting (daily, persists across sign-out) ─────────────
+
+/** Returns today's date string in YYYY-MM-DD format */
+function todayKey(): string {
+    return new Date().toISOString().slice(0, 10) // e.g. "2026-02-25"
+}
 
 export async function getRequestCount(): Promise<number> {
     try {
         const result = await chrome.storage.local.get(STORAGE_KEY_REQUEST_COUNT)
-        return result[STORAGE_KEY_REQUEST_COUNT] || 0
+        const data = result[STORAGE_KEY_REQUEST_COUNT]
+        if (!data || data.date !== todayKey()) {
+            // New day or no data — count is 0
+            return 0
+        }
+        return data.count || 0
     } catch {
         return 0
     }
 }
 
 export async function incrementRequestCount(): Promise<number> {
+    const today = todayKey()
     const current = await getRequestCount()
     const newCount = current + 1
-    await chrome.storage.local.set({ [STORAGE_KEY_REQUEST_COUNT]: newCount })
+    await chrome.storage.local.set({
+        [STORAGE_KEY_REQUEST_COUNT]: { count: newCount, date: today },
+    })
     return newCount
-}
-
-export async function resetRequestCount(): Promise<void> {
-    await chrome.storage.local.set({ [STORAGE_KEY_REQUEST_COUNT]: 0 })
 }
 
 export async function canMakeRequest(): Promise<boolean> {
@@ -89,11 +98,11 @@ export async function getUser(): Promise<User | null> {
 }
 
 /**
- * Sign out from Supabase and reset request count.
+ * Sign out from Supabase.
+ * Note: free request count is NOT reset — it resets daily at midnight.
  */
 export async function signOut(): Promise<void> {
     await supabase.auth.signOut()
-    await resetRequestCount()
 }
 
 // ── Google OAuth via chrome.identity + Supabase ────────────────────

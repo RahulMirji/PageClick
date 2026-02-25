@@ -74,7 +74,8 @@ function SearchBox({ onSend, onStop, isLoading, selectedModel, onModelChange }: 
     }
 
     const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        // Enter (no shift) OR Cmd+Enter / Ctrl+Enter → send
+        if (e.key === 'Enter' && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
             e.preventDefault()
             handleSend()
         }

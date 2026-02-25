@@ -13,6 +13,7 @@ export default defineConfig({
         rollupOptions: {
             input: {
                 sidebar: resolve(__dirname, 'sidebar.html'),
+                options: resolve(__dirname, 'options.html'),
                 background: resolve(__dirname, 'src/background.ts'),
                 content: resolve(__dirname, 'src/content/capture-dom.ts'),
             },
@@ -20,6 +21,11 @@ export default defineConfig({
                 entryFileNames: '[name].js',
                 chunkFileNames: 'assets/[name]-[hash].js',
                 assetFileNames: 'assets/[name]-[hash].[ext]',
+                manualChunks: {
+                    'vendor-react': ['react', 'react-dom'],
+                    'vendor-supabase': ['@supabase/supabase-js'],
+                    'vendor-markdown': ['react-markdown', 'remark-gfm'],
+                },
             },
         },
     },

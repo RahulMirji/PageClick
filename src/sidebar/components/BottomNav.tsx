@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-export type TabId = 'home' | 'discover' | 'history' | 'profile'
+export type TabId = 'home' | 'workflows' | 'history' | 'profile'
 
 interface NavItemDef {
     id: TabId
@@ -20,12 +20,11 @@ const navItems: NavItemDef[] = [
         ),
     },
     {
-        id: 'discover',
-        label: 'Discover',
+        id: 'workflows',
+        label: 'Workflows',
         icon: (
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
             </svg>
         ),
     },
