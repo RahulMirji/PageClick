@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Prism from 'prismjs'
+import { downloadText } from '../utils/downloadService'
 
 // Load common languages
 import 'prismjs/components/prism-javascript'
@@ -43,13 +44,7 @@ function downloadFile(content: string, lang: string) {
         sql: 'sql', html: 'html', svg: 'svg', markdown: 'md',
     }
     const ext = extMap[lang] || 'txt'
-    const blob = new Blob([content], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `snippet.${ext}`
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadText(content, `snippet.${ext}`, 'text/plain')
 }
 
 // ── Sub-components ────────────────────────────────────────────────────

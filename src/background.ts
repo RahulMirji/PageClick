@@ -1,5 +1,14 @@
 /// <reference types="chrome" />
 
+// ── Notification click handler (registered once at module level) ───
+chrome.notifications.onClicked.addListener((_notificationId) => {
+    chrome.windows.getCurrent((win) => {
+        chrome.sidePanel.open({ windowId: win.id! }).catch(() => { })
+    })
+})
+
+import { cdpManager } from './background/cdpManager'
+
 /**
  * Background service worker — message routing hub.
  *
@@ -47,6 +56,82 @@ chrome.runtime.onMessage.addListener(
         // WAIT_FOR_PAGE_LOAD — wait for the active tab to finish loading
         if (message.type === 'WAIT_FOR_PAGE_LOAD') {
             handleWaitForPageLoad(message.timeoutMs || 10000, sendResponse)
+            return true
+        }
+
+        // SHOW_NOTIFICATION — fire a Chrome OS notification from the background
+        if (message.type === 'SHOW_NOTIFICATION') {
+            chrome.notifications.create({
+                type: 'basic',
+                iconUrl: 'icons/icon128.png',
+                title: message.title || 'PageClick',
+                message: message.message || 'Task complete.',
+                priority: 1,
+            })
+            sendResponse({ ok: true })
+            return true
+        }
+
+        // DOWNLOAD_FILE — save a remote URL to the user's Downloads folder
+        if (message.type === 'DOWNLOAD_FILE') {
+            chrome.downloads.download(
+                {
+                    url: message.url,
+                    filename: message.filename || undefined,
+                    saveAs: message.saveAs ?? false,
+                },
+                (downloadId) => {
+                    if (chrome.runtime.lastError) {
+                        sendResponse({ ok: false, error: chrome.runtime.lastError.message })
+                    } else {
+                        sendResponse({ ok: true, downloadId })
+                    }
+                }
+            )
+            return true // keep channel open for async callback
+        }
+
+        // ATTACH_DEBUGGER — attach CDP to the active tab
+        if (message.type === 'ATTACH_DEBUGGER') {
+            chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+                const tabId = tabs[0]?.id
+                if (!tabId) { sendResponse({ ok: false, error: 'No active tab' }); return }
+                const result = await cdpManager.attach(tabId)
+                sendResponse(result)
+            })
+            return true
+        }
+
+        // DETACH_DEBUGGER — detach CDP from the active tab
+        if (message.type === 'DETACH_DEBUGGER') {
+            chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+                const tabId = tabs[0]?.id
+                if (tabId) await cdpManager.detach(tabId)
+                sendResponse({ ok: true })
+            })
+            return true
+        }
+
+        // GET_CDP_SNAPSHOT — return buffered CDP data for the active tab
+        if (message.type === 'GET_CDP_SNAPSHOT') {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                const tabId = tabs[0]?.id
+                const snapshot = tabId
+                    ? cdpManager.getSnapshot(tabId)
+                    : { attached: false, networkLog: [], consoleLog: [], jsErrors: [], capturedAt: Date.now() }
+                sendResponse({ type: 'CDP_SNAPSHOT_RESULT', snapshot })
+            })
+            return true
+        }
+
+        // EVAL_JS — evaluate a JS expression in the active tab via CDP Runtime
+        if (message.type === 'EVAL_JS') {
+            chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+                const tabId = tabs[0]?.id
+                if (!tabId) { sendResponse({ ok: false, error: 'No active tab' }); return }
+                const result = await cdpManager.evalJs(tabId, message.expression)
+                sendResponse({ type: 'EVAL_JS_RESULT', ...result })
+            })
             return true
         }
     }
@@ -315,3 +400,8 @@ async function handleWaitForPageLoad(
         })
     }
 }
+
+// ── CDP cleanup: detach when tab is closed ─────────────────────────
+chrome.tabs.onRemoved.addListener((tabId) => {
+    cdpManager.detach(tabId).catch(() => { })
+})

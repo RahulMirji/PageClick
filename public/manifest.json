@@ -5,12 +5,15 @@
     "description": "AI-powered sidebar assistant that understands pages and suggests safe actions.",
     "incognito": "spanning",
     "permissions": [
+        "debugger",
+        "downloads",
         "sidePanel",
         "activeTab",
         "tabs",
         "storage",
         "scripting",
-        "identity"
+        "identity",
+        "notifications"
     ],
     "oauth2": {
         "client_id": "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",

@@ -1,6 +1,6 @@
 # PageClick → Claude-Level Extension Roadmap
 
-> **Current Score: 72+ / 100** — Target: **80+**
+> **Current Score: 82+ / 100** — Target: **85+**
 > Last updated: 2026-02-25
 
 ---
@@ -63,14 +63,14 @@
 
 | # | Feature | Impact | Effort | Why? |
 |---|---------|--------|--------|------|
-| 6 | **Debugger API Integration** | +7 pts | High | Claude uses `chrome.debugger` for network inspection, JS state, console access. Add `debugger` permission + CDP wrapper |
+| 6 | ~~**Debugger API Integration**~~ ✅ | +7 pts | High | Done — CDP attach/detach lifecycle, Network/Console/Runtime domains, ring buffers, `eval` action type, injected into agent prompt as RUNTIME CONTEXT |
 
 #### 🟢 Priority 3 — Nice to Have (Platform Features)
 
 | # | Feature | Impact | Effort | Why? |
 |---|---------|--------|--------|------|
-| 9 | **Notification System** | +3 pts | Low | Add `notifications` permission. Alert users when background tasks complete |
-| 10 | **Download Management** | +3 pts | Medium | Add `downloads` permission. Let AI save files, export conversations, download artifacts |
+| 9 | ~~**Notification System**~~ ✅ | +3 pts | Low | Done — `notifications` permission, background handler, visibility-gated alerts on task complete/fail |
+| 10 | ~~**Download Management**~~ ✅ | +3 pts | Medium | Done — `chrome.downloads` for AI-triggered file saves, per-message save button, per-conversation export button |
 | 11 | **Project/Context System** | +5 pts | High | Persistent project contexts with custom instructions per website/workflow |
 | 12 | **Native Messaging** | +3 pts | High | Communicate with desktop apps — clipboard, file system, local tools |
 | 13 | **Tab Group Management** | +2 pts | Medium | Add `tabGroups` permission. Let AI organize research into tab groups |
@@ -119,5 +119,5 @@ Phase 4 — Platform & Scale                   → Score: 85 → 95+
 
 ---
 
-> **Phase 2 complete! 🎉 Score: 72+. Next up: Phase 3 deep integrations — Debugger API, Notifications, Downloads.**
+> **Phase 3 in progress! 🔥 Score: 82+. Completed: #9 Notifications, #6 Debugger API, #10 Downloads. Next: #13 Tab Groups.**
 

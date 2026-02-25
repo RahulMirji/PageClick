@@ -42,7 +42,7 @@ export type ExtensionMessage =
 
 // --- Action Plan Types (§6) ---
 
-export type ActionType = 'click' | 'input' | 'select' | 'scroll' | 'extract' | 'navigate'
+export type ActionType = 'click' | 'input' | 'select' | 'scroll' | 'extract' | 'navigate' | 'eval' | 'download'
 export type RiskLevel = 'low' | 'medium' | 'high'
 
 export interface ActionStep {
@@ -128,5 +128,43 @@ export interface PageSnapshot {
     /** Plain text excerpt of visible content (fallback) */
     textContent: string
     /** Timestamp of capture */
+    capturedAt: number
+}
+
+// --- CDP (Chrome DevTools Protocol) Types ---
+
+/** A single captured network request/response pair */
+export interface CDPNetworkEntry {
+    requestId: string
+    url: string
+    method: string
+    status?: number
+    statusText?: string
+    /** Response body truncated to 2000 chars — never store full bodies */
+    responseBody?: string
+    timestamp: number
+    failed?: boolean
+    failureText?: string
+}
+
+/** A single console message captured via CDP */
+export interface CDPConsoleEntry {
+    level: 'log' | 'warn' | 'error' | 'info' | 'debug'
+    text: string
+    timestamp: number
+    source?: string
+    lineNumber?: number
+}
+
+/** Full CDP context snapshot returned to sidebar on each loop iteration */
+export interface CDPSnapshot {
+    /** Whether the debugger is currently attached to this tab */
+    attached: boolean
+    /** Last 20 network requests, newest first */
+    networkLog: CDPNetworkEntry[]
+    /** Last 30 console messages */
+    consoleLog: CDPConsoleEntry[]
+    /** Last 10 uncaught JS errors (from Runtime.exceptionThrown) */
+    jsErrors: string[]
     capturedAt: number
 }

@@ -47,6 +47,7 @@ import {
     parseTaskComplete,
 } from './utils/agentPrompt'
 import { trimToContextWindow, estimateTokens } from './utils/tokenUtils'
+import { requestTaskNotification } from './utils/notificationService'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
@@ -344,6 +345,8 @@ function App() {
         if (isTask) {
             resetProgressTracking()
             orchestratorRef.current.startTask(text)
+            // Attach CDP debugger for runtime context (detached in runAgentLoop finally)
+            chrome.runtime.sendMessage({ type: 'ATTACH_DEBUGGER' }).catch(() => { })
             await runAgentLoop(convId)
         } else {
             // Info request — one-shot answer
@@ -378,11 +381,15 @@ function App() {
                 const state = orchestrator.getState()
                 const snapshot = await capturePage()
 
+                // Poll CDP runtime context (network log, console, JS errors)
+                const cdpRes = await chrome.runtime.sendMessage({ type: 'GET_CDP_SNAPSHOT' }).catch(() => null)
+                const cdpSnapshot = cdpRes?.snapshot ?? null
+
                 let prompt = ''
                 if (state.phase === 'clarifying') {
                     prompt = buildClarificationPrompt(state.goal, snapshot)
                 } else if (state.phase === 'executing' || state.phase === 'observing') {
-                    prompt = buildExecutionPrompt(orchestrator, snapshot)
+                    prompt = buildExecutionPrompt(orchestrator, snapshot, cdpSnapshot)
                 } else {
                     break // Should not happen
                 }
@@ -501,6 +508,8 @@ function App() {
                         const summary = complete.block!.summary
                         setMessages(prev => [...prev, { role: 'assistant', content: summary }])
                         saveMessage(convId, 'assistant', summary).catch(console.warn)
+                        // Notify user if they've switched away from the panel
+                        requestTaskNotification('✅ Task Complete', summary.slice(0, 100))
                         break
                     }
 
@@ -601,9 +610,13 @@ function App() {
             const errMsg = `Task error: ${err.message}`
             setMessages(prev => [...prev, { role: 'assistant', content: errMsg }])
             saveMessage(convId, 'assistant', errMsg).catch(console.warn)
+            // Notify user of failure if they've switched away
+            requestTaskNotification('❌ Task Failed', err.message || 'Something went wrong.')
         } finally {
             setIsLoading(false)
             stopScanRef.current?.()
+            // Detach CDP debugger — removes the yellow banner from the tab
+            chrome.runtime.sendMessage({ type: 'DETACH_DEBUGGER' }).catch(() => { })
 
             // Save final progress card to history if we have one
             if (accumulatedProgressRef.current.steps.length > 0) {
@@ -638,6 +651,35 @@ function App() {
 
         // Execute via background
         try {
+            // Handle 'eval' action — runs a JS expression via CDP Runtime
+            if (step.action === 'eval') {
+                const evalRes = await chrome.runtime.sendMessage({ type: 'EVAL_JS', expression: step.value || step.selector })
+                return {
+                    success: !evalRes?.error,
+                    action: 'eval',
+                    selector: step.selector,
+                    extractedData: evalRes?.result ?? undefined,
+                    error: evalRes?.error ?? undefined,
+                    durationMs: 0,
+                }
+            }
+            // Handle 'download' action — saves a file found on the page
+            if (step.action === 'download') {
+                let targetUrl = step.value || step.selector
+                // If it looks like a CSS selector (not a URL), resolve the href via eval
+                if (targetUrl && !targetUrl.startsWith('http')) {
+                    const evalRes = await chrome.runtime.sendMessage({
+                        type: 'EVAL_JS',
+                        expression: `document.querySelector(${JSON.stringify(targetUrl)})?.href || document.querySelector(${JSON.stringify(targetUrl)})?.src || ''`
+                    })
+                    targetUrl = evalRes?.result || ''
+                }
+                if (!targetUrl) {
+                    return { success: false, action: 'download', selector: step.selector, error: 'Could not resolve download URL', durationMs: 0 }
+                }
+                const dlRes = await chrome.runtime.sendMessage({ type: 'DOWNLOAD_FILE', url: targetUrl, filename: step.description?.replace(/[^a-z0-9.]/gi, '_') || undefined })
+                return { success: dlRes?.ok ?? false, action: 'download', selector: step.selector, error: dlRes?.error, durationMs: 0 }
+            }
             const res = await chrome.runtime.sendMessage({ type: 'EXECUTE_ACTION', step })
             await logAudit({ timestamp: Date.now(), action: step.action, selector: step.selector, url: pageUrlRef.current, verdict: verdict.tier, reason: verdict.reason, userApproved: true, result: res.result.success ? 'success' : 'failed' })
             return res.result

@@ -7,7 +7,7 @@
  * - Checkpoint detection: AI signals when payment/sensitive flows are reached
  */
 
-import type { PageSnapshot } from '../../shared/messages'
+import type { PageSnapshot, CDPSnapshot } from '../../shared/messages'
 import type { TaskOrchestrator } from './taskOrchestrator'
 
 // ── Shared formatting instructions ───────────────────────────────
@@ -55,6 +55,59 @@ function buildPageContext(snapshot: PageSnapshot | null): string {
     return parts.join('\n')
 }
 
+// ── CDP context builder ───────────────────────────────────────────
+
+/**
+ * Formats buffered CDP runtime data (network, console, JS errors) into
+ * a compact prompt section. Hard-capped at 1500 chars to protect token budget.
+ */
+function buildCDPContext(cdp: CDPSnapshot | null | undefined): string {
+    if (!cdp?.attached) return ''
+
+    const parts: string[] = ['RUNTIME CONTEXT (Chrome DevTools):']
+
+    // JS errors first — highest diagnostic signal
+    if (cdp.jsErrors.length > 0) {
+        parts.push(`JS ERRORS (${cdp.jsErrors.length}):`)
+        cdp.jsErrors.slice(0, 5).forEach(e => parts.push(`  ❌ ${e}`))
+    }
+
+    // Console: surface warn/error only (reduces noise)
+    const importantConsole = cdp.consoleLog.filter(m => m.level === 'error' || m.level === 'warn')
+    if (importantConsole.length > 0) {
+        parts.push(`CONSOLE WARNINGS/ERRORS (${importantConsole.length}):`)
+        importantConsole.slice(0, 5).forEach(m =>
+            parts.push(`  [${m.level.toUpperCase()}] ${m.text.slice(0, 200)}`)
+        )
+    }
+
+    // Network: failures first, then recent successes with JSON bodies
+    if (cdp.networkLog.length > 0) {
+        const failures = cdp.networkLog.filter(r => r.failed || (r.status !== undefined && r.status >= 400))
+        const successes = cdp.networkLog.filter(r => !r.failed && r.status !== undefined && r.status < 400)
+
+        if (failures.length > 0) {
+            parts.push(`NETWORK FAILURES (${failures.length}):`)
+            failures.slice(0, 5).forEach(r =>
+                parts.push(`  ❌ ${r.method} ${r.url} → ${r.status ?? 'failed'} ${r.failureText ?? ''}`)
+            )
+        }
+
+        if (successes.length > 0) {
+            parts.push(`RECENT API CALLS (${successes.length}):`)
+            successes.slice(0, 5).forEach(r => {
+                let line = `  ✅ ${r.method} ${r.url} → ${r.status}`
+                if (r.responseBody) line += `\n     Response: ${r.responseBody.slice(0, 300)}`
+                parts.push(line)
+            })
+        }
+    }
+
+    const raw = parts.join('\n')
+    // Hard cap to protect the 6000-token context window budget
+    return raw.length > 1500 ? raw.slice(0, 1497) + '...' : raw
+}
+
 // ── Plan prompt (replaces old clarification prompt) ──────────────
 
 export function buildClarificationPrompt(
@@ -99,10 +152,12 @@ Only if truly stuck:
 export function buildExecutionPrompt(
     orchestrator: TaskOrchestrator,
     snapshot: PageSnapshot | null,
+    cdp?: CDPSnapshot | null,
 ): string {
     const state = orchestrator.getState()
     const historySummary = orchestrator.buildHistorySummary()
     const clarifications = orchestrator.buildClarificationContext()
+    const cdpContext = buildCDPContext(cdp)
 
     return `You are PageClick AI, an autonomous browser automation agent. You are in the EXECUTION phase — you must generate the NEXT SINGLE ACTION to take.
 
@@ -113,6 +168,7 @@ ${clarifications}
 ${historySummary}
 
 ${buildPageContext(snapshot)}
+${cdpContext ? '\n' + cdpContext : ''}
 
 LOOP ITERATION: ${state.loopCount + 1} / ${state.maxLoops}
 
@@ -132,7 +188,7 @@ RESPONSE FORMAT — pick ONE of these:
 Your brief explanation of what you're doing and why.
 
 <<<ACTION_PLAN>>>
-{"explanation":"what this step does","actions":[{"action":"click|input|scroll|extract|navigate","selector":"CSS selector","value":"optional value","confidence":0.95,"risk":"low|medium|high","description":"human readable step description"}]}
+{"explanation":"what this step does","actions":[{"action":"click|input|scroll|extract|navigate|eval|download","selector":"CSS selector, JS expression for eval, or CSS selector/URL for download","value":"optional value (for eval: JS expression; for download: direct URL; for navigate: target URL)","confidence":0.95,"risk":"low|medium|high","description":"human readable step description"}]}
 <<<END_ACTION_PLAN>>>
 
 **Option B: Task checkpoint (payment, account creation, etc.)**
@@ -154,10 +210,13 @@ CRITICAL RULES:
 - Generate ONLY ONE action at a time.
 - For input actions, make sure the selector targets an actual input/textarea element.
 - For navigate, put the full URL in "value".
+- For eval, put the JS expression in "value" (selector can be empty). Result is returned as extractedData.
 - NEVER interact with password fields, credit card fields, or payment forms.
 - If you see a checkout/payment page, emit a CHECKPOINT instead of an action.
 - If you've achieved the goal or can't make progress, emit TASK_COMPLETE.
-- Use "extract" to read text from the page when you need information to decide next steps.
+- Use "extract" to read visible DOM text; use "eval" to query JS state (e.g. input values, framework state).
+- Use "download" to save a file: set "selector" to a CSS selector for a link/image, or put the full URL in "value". NEVER download payment receipts or personal data.
+- If RUNTIME CONTEXT shows JS errors or network failures, factor them into your next action decision.
 `
 }
 
