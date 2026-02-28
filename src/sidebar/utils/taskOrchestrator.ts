@@ -264,6 +264,23 @@ export class TaskOrchestrator {
   }
 
   /**
+   * Detect if the agent appears stuck (same URL, no progress for 3+ loops).
+   */
+  isStuck(): boolean {
+    const h = this.state.history;
+    if (h.length < 3) return false;
+    const recent = h.slice(-3);
+    // All on the same URL
+    const sameUrl = recent.every((e) => e.pageUrl === recent[0].pageUrl);
+    // All actions succeeded (so it's not failing — it's looping)
+    const allSucceeded = recent.every((e) => e.results.every((r) => r.success));
+    // Check if the same action+selector was repeated
+    const actions = recent.map((e) => e.results.map((r) => `${r.action}:${r.selector}`).join(","));
+    const repeating = actions[0] === actions[1] || actions[1] === actions[2];
+    return sameUrl && allSucceeded && repeating;
+  }
+
+  /**
    * Build a compact history summary for the AI prompt
    * (keeps token count manageable).
    */
@@ -271,7 +288,12 @@ export class TaskOrchestrator {
     if (this.state.history.length === 0) return "";
 
     const lines: string[] = ["PREVIOUS ACTIONS:"];
-    for (const entry of this.state.history) {
+    // Show last 8 iterations to keep token budget manageable
+    const recentHistory = this.state.history.slice(-8);
+    if (this.state.history.length > 8) {
+      lines.push(`(${this.state.history.length - 8} earlier iterations omitted)`);
+    }
+    for (const entry of recentHistory) {
       lines.push(
         `\n--- Iteration ${entry.iteration} (on ${entry.pageUrl}) ---`,
       );
@@ -283,6 +305,12 @@ export class TaskOrchestrator {
         );
       }
     }
+
+    // Add stuck warning
+    if (this.isStuck()) {
+      lines.push(`\n⚠️ WARNING: You appear to be STUCK — you've repeated the same action on the same page for 3 iterations. Try a DIFFERENT approach: scroll down, click a different element, or look for an alternative path.`);
+    }
+
     return lines.join("\n");
   }
 

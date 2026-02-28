@@ -67,6 +67,7 @@ describe("capture-dom content message listener", () => {
 
     (globalThis as any).document = {
       title: "Sample Page",
+      readyState: "complete",
       body,
       documentElement: new FakeElement("html"),
       createTreeWalker: vi.fn(() => ({
@@ -74,6 +75,7 @@ describe("capture-dom content message listener", () => {
         nextNode: () => null,
       })),
       querySelector: vi.fn(() => null),
+      querySelectorAll: vi.fn(() => []),
       getElementById: vi.fn((id: string) =>
         id === "__pc-highlight" ? existingHighlight : null,
       ),
@@ -125,6 +127,9 @@ describe("capture-dom content message listener", () => {
     expect(response.type).toBe("CAPTURE_PAGE_RESULT");
     expect(response.payload.url).toBe("https://example.com/page");
     expect(response.payload.title).toBe("Sample Page");
+    // New P0 fields
+    expect(response.payload.readyState).toBe("complete");
+    expect(response.payload.hasLoadingIndicators).toBe(false);
   });
 
   it("handles HIGHLIGHT_ELEMENT and CLEAR_HIGHLIGHT", () => {

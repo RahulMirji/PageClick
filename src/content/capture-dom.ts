@@ -180,7 +180,7 @@ function shouldCapture(el: Element): boolean {
 
 // ── Main DOM walker ───────────────────────────────────────────────
 
-const MAX_NODES = 500;
+const MAX_NODES = 800;
 const MAX_TEXT_LENGTH = 120;
 
 function captureDOM(): DOMNode[] {
@@ -266,9 +266,15 @@ function captureDOM(): DOMNode[] {
         attrs.options = optTexts.join(" | ");
       }
 
-      // Include aria-checked for custom radio/checkbox elements (e.g., Google Forms)
+      // Include ARIA state attributes for complex UIs (GCP, wizards, etc.)
       const ariaChecked = el.getAttribute("aria-checked");
       if (ariaChecked) attrs["aria-checked"] = ariaChecked;
+      const ariaExpanded = el.getAttribute("aria-expanded");
+      if (ariaExpanded) attrs["aria-expanded"] = ariaExpanded;
+      const ariaSelected = el.getAttribute("aria-selected");
+      if (ariaSelected) attrs["aria-selected"] = ariaSelected;
+      const ariaCurrent = el.getAttribute("aria-current");
+      if (ariaCurrent) attrs["aria-current"] = ariaCurrent;
 
       // Get visible text (truncated)
       let text = "";
@@ -320,6 +326,89 @@ function captureTextContent(): string {
   return text;
 }
 
+// ── Form/flow context detection ───────────────────────────────────
+
+function detectFormContext(): import("../shared/messages").FormContext | undefined {
+  // Detect step indicators ("Step 2 of 5", "2/5", etc.)
+  let stepIndicator: string | undefined;
+  const stepPatterns = [
+    /step\s+(\d+)\s+(?:of|\/)\s+(\d+)/i,
+    /(\d+)\s*(?:of|\/)\s*(\d+)\s*step/i,
+  ];
+  const bodyText = document.body.innerText || "";
+  for (const pat of stepPatterns) {
+    const m = bodyText.match(pat);
+    if (m) { stepIndicator = m[0].trim(); break; }
+  }
+
+  // Check for aria-based step indicators
+  const currentStep = document.querySelector('[aria-current="step"], [aria-current="page"], .stepper .active, .step.active, .wizard-step.current');
+  const activeStep = currentStep?.textContent?.replace(/\s+/g, " ").trim().substring(0, 80);
+
+  // Detect progress bars
+  let progressPercent: number | undefined;
+  const progressBar = document.querySelector('[role="progressbar"]') as HTMLElement | null;
+  if (progressBar) {
+    const val = progressBar.getAttribute("aria-valuenow");
+    const max = progressBar.getAttribute("aria-valuemax") || "100";
+    if (val) progressPercent = Math.round((parseFloat(val) / parseFloat(max)) * 100);
+  }
+
+  // Count form fields (filled vs empty)
+  const allInputs = document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]), textarea, select'
+  );
+  let totalFields = 0;
+  let filledFields = 0;
+  const unfilledFields: string[] = [];
+
+  allInputs.forEach((el) => {
+    if (!isVisible(el)) return;
+    if (isSensitiveElement(el)) return; // skip password/CC fields
+    totalFields++;
+    const hasValue = el instanceof HTMLSelectElement
+      ? el.selectedIndex > 0
+      : !!el.value.trim();
+    if (hasValue) {
+      filledFields++;
+    } else if (unfilledFields.length < 10) {
+      const label = el.getAttribute("aria-label")
+        || el.getAttribute("placeholder")
+        || el.getAttribute("name")
+        || el.closest("label")?.textContent?.trim().substring(0, 50)
+        || `${el.tagName.toLowerCase()}[${el.type || "text"}]`;
+      unfilledFields.push(label);
+    }
+  });
+
+  // Only return if there's something meaningful
+  if (!stepIndicator && !activeStep && progressPercent === undefined && totalFields === 0) {
+    return undefined;
+  }
+
+  return { stepIndicator, progressPercent, activeStep, totalFields, filledFields, unfilledFields };
+}
+
+// ── Loading indicator detection ───────────────────────────────────
+
+function hasLoadingIndicators(): boolean {
+  // Check for common loading patterns
+  const loadingSelectors = [
+    '[aria-busy="true"]',
+    '.loading', '.spinner', '.skeleton',
+    '[class*="loading"]', '[class*="spinner"]', '[class*="skeleton"]',
+    '[role="progressbar"][aria-valuenow="0"]',
+    '.shimmer', '[class*="shimmer"]',
+  ];
+  for (const sel of loadingSelectors) {
+    try {
+      const el = document.querySelector(sel);
+      if (el && isVisible(el)) return true;
+    } catch { /* invalid selector */ }
+  }
+  return false;
+}
+
 // ── Build full snapshot ───────────────────────────────────────────
 
 function buildSnapshot(): PageSnapshot {
@@ -328,13 +417,27 @@ function buildSnapshot(): PageSnapshot {
       .querySelector('meta[name="description"]')
       ?.getAttribute("content") || "";
 
+  const nodes = captureDOM();
+  
+  // Sort nodes: viewport-visible first (by Y position), then off-screen
+  nodes.sort((a, b) => {
+    const aVisible = a.bbox.y >= 0 && a.bbox.y < window.innerHeight;
+    const bVisible = b.bbox.y >= 0 && b.bbox.y < window.innerHeight;
+    if (aVisible && !bVisible) return -1;
+    if (!aVisible && bVisible) return 1;
+    return a.bbox.y - b.bbox.y;
+  });
+
   return {
     url: window.location.href,
     title: document.title || "",
     description: metaDesc,
-    nodes: captureDOM(),
+    nodes,
     textContent: captureTextContent(),
     capturedAt: Date.now(),
+    readyState: document.readyState,
+    hasLoadingIndicators: hasLoadingIndicators(),
+    formContext: detectFormContext(),
   };
 }
 

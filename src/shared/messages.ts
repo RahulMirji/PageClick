@@ -183,6 +183,22 @@ export interface DOMNode {
   path: string;
 }
 
+/** Detected multi-step flow context (wizards, forms, steppers) */
+export interface FormContext {
+  /** Step indicator text like "Step 2 of 5" if found */
+  stepIndicator?: string;
+  /** Progress bar percentage (0-100) if found */
+  progressPercent?: number;
+  /** Active tab/step label from stepper or tab bar */
+  activeStep?: string;
+  /** Total form fields on page */
+  totalFields: number;
+  /** Number of fields already filled */
+  filledFields: number;
+  /** List of unfilled field labels/placeholders (up to 10) */
+  unfilledFields: string[];
+}
+
 export interface PageSnapshot {
   url: string;
   title: string;
@@ -193,6 +209,12 @@ export interface PageSnapshot {
   textContent: string;
   /** Timestamp of capture */
   capturedAt: number;
+  /** document.readyState at capture time */
+  readyState?: string;
+  /** Whether spinners/skeleton loaders are visible */
+  hasLoadingIndicators?: boolean;
+  /** Multi-step form/wizard context if detected */
+  formContext?: FormContext;
 }
 
 // --- CDP (Chrome DevTools Protocol) Types ---

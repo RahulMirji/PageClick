@@ -131,4 +131,90 @@ describe("TaskOrchestrator", () => {
     expect(orchestrator.getState().phase).toBe("error");
     expect(orchestrator.getState().statusMessage).toBe("Loop budget exhausted");
   });
+
+  it("detects stuck state when repeating same action on same URL", () => {
+    const orchestrator = new TaskOrchestrator();
+    orchestrator.startTask("Fill form");
+    orchestrator.beginExecution();
+
+    // 3 identical iterations on the same URL
+    for (let i = 1; i <= 3; i++) {
+      orchestrator.completeLoop({
+        iteration: i,
+        pageUrl: "https://example.com/form",
+        plan: plan("Click submit"),
+        results: [
+          {
+            success: true,
+            action: "click",
+            selector: "#submit",
+            durationMs: 50,
+          },
+        ],
+        timestamp: Date.now(),
+      });
+    }
+
+    expect(orchestrator.isStuck()).toBe(true);
+    const summary = orchestrator.buildHistorySummary();
+    expect(summary).toContain("STUCK");
+    expect(summary).toContain("DIFFERENT approach");
+  });
+
+  it("does NOT flag as stuck when URLs differ", () => {
+    const orchestrator = new TaskOrchestrator();
+    orchestrator.startTask("Navigate multi-page");
+    orchestrator.beginExecution();
+
+    for (let i = 1; i <= 3; i++) {
+      orchestrator.completeLoop({
+        iteration: i,
+        pageUrl: `https://example.com/page${i}`,
+        plan: plan("Click next"),
+        results: [
+          {
+            success: true,
+            action: "click",
+            selector: "#next",
+            durationMs: 50,
+          },
+        ],
+        timestamp: Date.now(),
+      });
+    }
+
+    expect(orchestrator.isStuck()).toBe(false);
+  });
+
+  it("limits history summary to last 8 iterations", () => {
+    const orchestrator = new TaskOrchestrator();
+    orchestrator.startTask("Long task");
+    orchestrator.beginExecution();
+
+    for (let i = 1; i <= 10; i++) {
+      orchestrator.completeLoop({
+        iteration: i,
+        pageUrl: `https://example.com/${i}`,
+        plan: plan(`Plan ${i}`),
+        results: [
+          {
+            success: true,
+            action: "click",
+            selector: `#btn-${i}`,
+            durationMs: 50,
+          },
+        ],
+        timestamp: Date.now(),
+      });
+    }
+
+    const summary = orchestrator.buildHistorySummary();
+    // Should not contain first 2 iterations (use exact match with "---" delimiter)
+    expect(summary).not.toContain("Iteration 1 (on");
+    expect(summary).not.toContain("Iteration 2 (on");
+    // Should contain later iterations
+    expect(summary).toContain("Iteration 3");
+    expect(summary).toContain("Iteration 10");
+    expect(summary).toContain("earlier iterations omitted");
+  });
 });

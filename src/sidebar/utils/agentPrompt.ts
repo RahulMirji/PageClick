@@ -32,16 +32,43 @@ function buildPageContext(snapshot: PageSnapshot | null): string {
     parts.push(`- Description: ${snapshot.description}`);
   }
 
+  // Page load state
+  if (snapshot.readyState && snapshot.readyState !== "complete") {
+    parts.push(`- ⚠️ Page still loading (readyState: ${snapshot.readyState})`);
+  }
+  if (snapshot.hasLoadingIndicators) {
+    parts.push(`- ⚠️ Loading indicators detected (spinners/skeletons visible) — page may not be fully loaded`);
+  }
+
+  // Flow / form position awareness
+  if (snapshot.formContext) {
+    const fc = snapshot.formContext;
+    parts.push(`FLOW POSITION:`);
+    if (fc.stepIndicator) parts.push(`  - Step indicator: "${fc.stepIndicator}"`);
+    if (fc.activeStep) parts.push(`  - Active step/tab: "${fc.activeStep}"`);
+    if (fc.progressPercent !== undefined) parts.push(`  - Progress: ${fc.progressPercent}%`);
+    if (fc.totalFields > 0) {
+      parts.push(`  - Form fields: ${fc.filledFields}/${fc.totalFields} filled`);
+      if (fc.unfilledFields.length > 0) {
+        parts.push(`  - Unfilled fields: ${fc.unfilledFields.join(", ")}`);
+      }
+    }
+  }
+
   if (snapshot.nodes && snapshot.nodes.length > 0) {
     parts.push(`- Interactive Elements (${snapshot.nodes.length}):`);
     const summary = snapshot.nodes
-      .slice(0, 50)
+      .slice(0, 60)
       .map((n) => {
         let desc = `  [${n.tag}] "${n.text}"`;
         if (n.attrs?.["aria-label"])
           desc += ` (aria: ${n.attrs["aria-label"]})`;
         if (n.attrs?.href) desc += ` → ${n.attrs.href}`;
         if (n.attrs?.role) desc += ` role=${n.attrs.role}`;
+        if (n.attrs?.["aria-expanded"]) desc += ` expanded=${n.attrs["aria-expanded"]}`;
+        if (n.attrs?.["aria-selected"] === "true") desc += ` [SELECTED]`;
+        if (n.attrs?.["aria-current"]) desc += ` [CURRENT]`;
+        if (n.attrs?.value) desc += ` value="${n.attrs.value}"`;
         if (n.attrs?._redacted) desc += ` [REDACTED]`;
         desc += ` @ selector: ${n.path}`;
         return desc;
@@ -197,18 +224,21 @@ ${buildPageContext(snapshot)}
 ${cdpContext ? "\n" + cdpContext : ""}
 ${projectContext ? "\n" + projectContext : ""}
 
-LOOP ITERATION: ${state.loopCount + 1} / ${state.maxLoops}
+LOOP ITERATION: ${state.loopCount + 1} / ${state.maxLoops}${state.loopCount >= state.maxLoops * 0.8 ? `\n⚠️ BUDGET WARNING: Only ${state.maxLoops - state.loopCount} iterations remaining. If you cannot complete the task soon, call task_complete with a summary of progress so far and what remains.` : ""}
 
 ${FORMATTING_RULES}
 
 INSTRUCTIONS:
-1. Look at the current page state and your previous actions.
+1. Look at the current page state, FLOW POSITION, and your previous actions.
 2. Think step-by-step: write a brief 1-sentence reasoning in your response text BEFORE calling any tool. This helps you plan better. For example: "The search box is visible at #search-input, I'll type the query there."
 3. Determine the SINGLE BEST next action to take toward the goal.
 4. Call EXACTLY ONE tool. After this action executes, you'll get a fresh page snapshot to decide the next step.
 5. Use CSS selectors from the Interactive Elements list above when selecting elements.
-6. If the page hasn't loaded expected content, use scroll.
+6. If the page hasn't loaded expected content, use scroll to reveal more content.
 7. If you need to navigate to a new page, use the navigate tool.
+8. Pay attention to FLOW POSITION — if a form shows "Step 2 of 5" with unfilled fields, fill those fields BEFORE clicking Next.
+9. If a loading indicator is detected, use scroll or wait before taking action — the page may not be ready.
+10. Check element values/states (aria-expanded, aria-selected, value) to understand what's already done.
 
 RULES:
 - ALWAYS write your brief reasoning as text content BEFORE the tool call. This is critical for accurate action selection.

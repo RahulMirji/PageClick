@@ -415,26 +415,44 @@ function App() {
 
   const capturePage = async (): Promise<PageSnapshot | null> => {
     const t0 = performance.now();
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: "CAPTURE_PAGE",
-      });
-      if (response?.type === "CAPTURE_PAGE_RESULT" && response.payload) {
-        pageUrlRef.current = response.payload.url || "";
-        console.log(`[Agent] capturePage: ${response.payload.url} (${(performance.now() - t0).toFixed(0)}ms)`);
-        // Auto-detect project context for this URL
-        try {
-          activeProjectRef.current = await matchProject(
-            response.payload.url || "",
-          );
-        } catch {
-          /* not critical */
+    let snapshot: PageSnapshot | null = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "CAPTURE_PAGE",
+        });
+        if (response?.type === "CAPTURE_PAGE_RESULT" && response.payload) {
+          const snap: PageSnapshot = response.payload;
+          snapshot = snap;
+          pageUrlRef.current = snap.url || "";
+
+          // If page looks ready (enough nodes, no loading indicators), accept it
+          const hasContent = (snap.nodes?.length ?? 0) >= 3;
+          const isLoaded = !snap.hasLoadingIndicators && snap.readyState === "complete";
+          if (hasContent && (isLoaded || attempt >= 2)) break;
+
+          // Page is still loading — wait and retry
+          if (attempt < 2) {
+            console.log(`[Agent] capturePage: page loading (nodes=${snap.nodes?.length}, readyState=${snap.readyState}, loading=${snap.hasLoadingIndicators}), retry ${attempt + 1}...`);
+            await new Promise((r) => setTimeout(r, 800));
+            continue;
+          }
         }
-        return response.payload;
+      } catch (e) {
+        console.warn("Failed to capture page:", e);
       }
-    } catch (e) {
-      console.warn("Failed to capture page:", e);
     }
+
+    if (snapshot) {
+      console.log(`[Agent] capturePage: ${snapshot.url} (${(performance.now() - t0).toFixed(0)}ms, nodes=${snapshot.nodes?.length})`);
+      // Auto-detect project context for this URL
+      try {
+        activeProjectRef.current = await matchProject(snapshot.url || "");
+      } catch { /* not critical */ }
+      return snapshot;
+    }
+
     console.warn(`[Agent] capturePage: FAILED or empty (${(performance.now() - t0).toFixed(0)}ms)`);
     return null;
   };
