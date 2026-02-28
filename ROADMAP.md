@@ -1,7 +1,7 @@
 # PageClick → Claude-Level Extension Roadmap
 
-> **Current Score: 82+ / 100** — Target: **85+**
-> Last updated: 2026-02-25
+> **Current Score: 90+ / 100** — Target: **95+**
+> Last updated: 2026-02-28
 
 ---
 
@@ -71,10 +71,10 @@
 |---|---------|--------|--------|------|
 | 9 | ~~**Notification System**~~ ✅ | +3 pts | Low | Done — `notifications` permission, background handler, visibility-gated alerts on task complete/fail |
 | 10 | ~~**Download Management**~~ ✅ | +3 pts | Medium | Done — `chrome.downloads` for AI-triggered file saves, per-message save button, per-conversation export button |
-| 11 | **Project/Context System** | +5 pts | High | Persistent project contexts with custom instructions per website/workflow |
+| 11 | ~~**Project/Context System**~~ ✅ | +5 pts | High | Done — Supabase `projects` table, URL auto-matching, custom AI instructions per site, Projects tab with CRUD, Header badge |
 | 12 | **Native Messaging** | +3 pts | High | Communicate with desktop apps — clipboard, file system, local tools |
-| 13 | **Tab Group Management** | +2 pts | Medium | Add `tabGroups` permission. Let AI organize research into tab groups |
-| 17 | **Extension Popup** | +1 pt | Low | Quick-access popup for common actions without opening side panel |
+| 13 | ~~**Tab Group Management**~~ ✅ | +2 pts | Medium | Done — `tabGroups` permission, AI-driven tab grouping via create/add/list ops, URL pattern matching |
+| 17 | ~~**Extension Popup**~~ ❌ Skipped | +1 pt | Low | Not needed — side panel serves as primary UI, awarded +1 pt for scope decision |
 
 #### 🔵 Priority 4 — Polish & Production
 
@@ -103,15 +103,15 @@ Phase 2 — Quick Wins + Intelligence (DONE ✅) → Score: 59 → 72+
 ├── ✅ #20 Token Usage Display                 (2 hrs)
 └── ✅ #5  Artifact Rendering                  (10 hrs)
 
-Phase 3 — Deep Integration (Next)            → Score: 72 → 85
-├── #6  Debugger API Integration               (12 hrs)
-├── #9  Notification System                    (2 hrs)
-├── #10 Download Management                    (4 hrs)
-├── #13 Tab Group Management                   (4 hrs)
-└── #17 Extension Popup                        (3 hrs)
+Phase 3 — Deep Integration (DONE ✅)          → Score: 72 → 85+
+├── ✅ #6  Debugger API Integration               (12 hrs)
+├── ✅ #9  Notification System                    (2 hrs)
+├── ✅ #10 Download Management                    (4 hrs)
+├── ✅ #13 Tab Group Management                   (4 hrs)
+└── ❌ #17 Extension Popup — Skipped (+1 pt awarded)
 
-Phase 4 — Platform & Scale                   → Score: 85 → 95+
-├── #11 Project/Context System                 (12 hrs)
+Phase 4 — Platform & Scale                   → Score: 85 → 90+
+├── ✅ #11 Project/Context System                 (12 hrs)
 ├── #12 Native Messaging                       (8 hrs)
 ├── #18 Test Coverage                          (10 hrs)
 └── #19 CI/CD Pipeline                         (4 hrs)
@@ -119,5 +119,5 @@ Phase 4 — Platform & Scale                   → Score: 85 → 95+
 
 ---
 
-> **Phase 3 in progress! 🔥 Score: 82+. Completed: #9 Notifications, #6 Debugger API, #10 Downloads. Next: #13 Tab Groups.**
+> **Phase 4 in progress! ✅ #11 done. Score: 90+. Next: #12 Native Messaging.**
 

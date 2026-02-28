@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react'
 import type { User } from '../utils/auth'
 import { getRequestCount, FREE_REQUEST_LIMIT } from '../utils/auth'
+import HistoryView from './HistoryView'
 
 interface ProfileViewProps {
     user: User | null
     onSignIn: () => void
     onSignOut: () => void
+    onSelectConversation: (conversationId: string) => void
+    onNewChat: () => void
+    currentConversationId: string | null
 }
 
-function ProfileView({ user, onSignIn, onSignOut }: ProfileViewProps) {
+function ProfileView({ user, onSignIn, onSignOut, onSelectConversation, onNewChat, currentConversationId }: ProfileViewProps) {
     const [requestCount, setRequestCount] = useState(0)
     const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
 
@@ -105,6 +109,18 @@ function ProfileView({ user, onSignIn, onSignOut }: ProfileViewProps) {
                         <span className="profile-row-label">Email</span>
                         <span className="profile-row-value">{user.email}</span>
                     </div>
+                </div>
+            </div>
+
+            {/* Chat History Section */}
+            <div className="profile-section">
+                <div className="profile-section-title">Chat History</div>
+                <div className="profile-history-embed">
+                    <HistoryView
+                        onSelectConversation={onSelectConversation}
+                        onNewChat={onNewChat}
+                        currentConversationId={currentConversationId}
+                    />
                 </div>
             </div>
 

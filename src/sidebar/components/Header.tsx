@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import type { User } from '../utils/auth'
+import type { Project } from '../utils/projectStore'
 
 interface HeaderProps {
     status?: string
     user?: User | null
     onSignOut?: () => void
+    activeProject?: Project | null
 }
 
-function Header({ status, user, onSignOut }: HeaderProps) {
+function Header({ status, user, onSignOut, activeProject }: HeaderProps) {
     const [searchValue, setSearchValue] = useState('')
     const [showUserMenu, setShowUserMenu] = useState(false)
     const menuRef = useRef<HTMLDivElement>(null)
@@ -137,6 +139,12 @@ function Header({ status, user, onSignOut }: HeaderProps) {
                         <button className="header-go-btn" onClick={handleGo}>Go</button>
                     )}
                 </>
+            )}
+            {activeProject && (
+                <div className="project-badge">
+                    <span className="project-badge-icon">{activeProject.icon}</span>
+                    <span className="project-badge-name">{activeProject.name}</span>
+                </div>
             )}
         </header>
     )

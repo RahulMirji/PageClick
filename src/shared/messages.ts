@@ -42,7 +42,7 @@ export type ExtensionMessage =
 
 // --- Action Plan Types (§6) ---
 
-export type ActionType = 'click' | 'input' | 'select' | 'scroll' | 'extract' | 'navigate' | 'eval' | 'download'
+export type ActionType = 'click' | 'input' | 'select' | 'scroll' | 'extract' | 'navigate' | 'eval' | 'download' | 'tabgroup'
 export type RiskLevel = 'low' | 'medium' | 'high'
 
 export interface ActionStep {

@@ -4,9 +4,9 @@ import Logo from './components/Logo'
 import ChatView from './components/ChatView'
 import SearchBox from './components/SearchBox'
 import BottomNav, { type TabId } from './components/BottomNav'
-import HistoryView from './components/HistoryView'
 import WorkflowsView from './components/WorkflowsView'
 import ProfileView from './components/ProfileView'
+import ProjectsView from './components/ProjectsView'
 import PageSuggestions from './components/PageSuggestions'
 import ConfirmDialog from './components/ConfirmDialog'
 import { triggerPageScan } from './utils/pageScanAnimation'
@@ -48,6 +48,7 @@ import {
 } from './utils/agentPrompt'
 import { trimToContextWindow, estimateTokens } from './utils/tokenUtils'
 import { requestTaskNotification } from './utils/notificationService'
+import { matchProject, type Project } from './utils/projectStore'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
@@ -95,6 +96,7 @@ function App() {
     const stopScanRef = useRef<(() => void) | null>(null)
     const abortRef = useRef<AbortController | null>(null)
     const messagesRef = useRef<Message[]>([])
+    const activeProjectRef = useRef<Project | null>(null)
 
     // Persistent progress tracking across all loop iterations
     const progressMsgIndexRef = useRef<number>(-1)
@@ -221,6 +223,10 @@ function App() {
             const response = await chrome.runtime.sendMessage({ type: 'CAPTURE_PAGE' })
             if (response?.type === 'CAPTURE_PAGE_RESULT' && response.payload) {
                 pageUrlRef.current = response.payload.url || ''
+                // Auto-detect project context for this URL
+                try {
+                    activeProjectRef.current = await matchProject(response.payload.url || '')
+                } catch { /* not critical */ }
                 return response.payload
             }
         } catch (e) {
@@ -358,7 +364,7 @@ function App() {
         stopScanRef.current = await triggerPageScan()
         try {
             const snapshot = await capturePage()
-            const prompt = buildInfoPrompt(snapshot)
+            const prompt = buildInfoPrompt(snapshot, activeProjectRef.current)
             const response = await callModel(prompt, text, images)
             await streamResponse(response, convId, false)
         } catch (err: any) {
@@ -387,9 +393,9 @@ function App() {
 
                 let prompt = ''
                 if (state.phase === 'clarifying') {
-                    prompt = buildClarificationPrompt(state.goal, snapshot)
+                    prompt = buildClarificationPrompt(state.goal, snapshot, activeProjectRef.current)
                 } else if (state.phase === 'executing' || state.phase === 'observing') {
-                    prompt = buildExecutionPrompt(orchestrator, snapshot, cdpSnapshot)
+                    prompt = buildExecutionPrompt(orchestrator, snapshot, cdpSnapshot, activeProjectRef.current)
                 } else {
                     break // Should not happen
                 }
@@ -680,6 +686,37 @@ function App() {
                 const dlRes = await chrome.runtime.sendMessage({ type: 'DOWNLOAD_FILE', url: targetUrl, filename: step.description?.replace(/[^a-z0-9.]/gi, '_') || undefined })
                 return { success: dlRes?.ok ?? false, action: 'download', selector: step.selector, error: dlRes?.error, durationMs: 0 }
             }
+            // Handle 'tabgroup' action — organize tabs into groups
+            if (step.action === 'tabgroup') {
+                try {
+                    const params = JSON.parse(step.value || '{}')
+                    const op = params.op || 'list'
+                    if (op === 'create') {
+                        const res = await chrome.runtime.sendMessage({
+                            type: 'TAB_GROUP_CREATE',
+                            title: params.title,
+                            color: params.color,
+                            urls: params.urls || [],
+                            collapsed: params.collapsed,
+                        })
+                        return { success: res?.ok ?? false, action: 'tabgroup', selector: '', extractedData: res?.ok ? `Created group "${params.title}" with ${res.tabCount} tabs` : undefined, error: res?.error, durationMs: 0 }
+                    } else if (op === 'add') {
+                        const res = await chrome.runtime.sendMessage({
+                            type: 'TAB_GROUP_ADD',
+                            title: params.title,
+                            urls: params.urls || [],
+                        })
+                        return { success: res?.ok ?? false, action: 'tabgroup', selector: '', extractedData: res?.ok ? `Added ${res.addedCount} tabs to group "${params.title}"` : undefined, error: res?.error, durationMs: 0 }
+                    } else {
+                        // list
+                        const res = await chrome.runtime.sendMessage({ type: 'TAB_GROUP_LIST' })
+                        const summary = res?.groups?.map((g: any) => `${g.title} (${g.color}, ${g.tabCount} tabs)`).join(', ') || 'No groups'
+                        return { success: res?.ok ?? false, action: 'tabgroup', selector: '', extractedData: summary, error: res?.error, durationMs: 0 }
+                    }
+                } catch (e: any) {
+                    return { success: false, action: 'tabgroup', selector: '', error: `Tab group error: ${e.message}`, durationMs: 0 }
+                }
+            }
             const res = await chrome.runtime.sendMessage({ type: 'EXECUTE_ACTION', step })
             await logAudit({ timestamp: Date.now(), action: step.action, selector: step.selector, url: pageUrlRef.current, verdict: verdict.tier, reason: verdict.reason, userApproved: true, result: res.result.success ? 'success' : 'failed' })
             return res.result
@@ -760,14 +797,10 @@ function App() {
 
     return (
         <div className="app">
-            <Header status={taskState?.statusMessage} user={user} onSignOut={handleSignOut} />
+            <Header status={taskState?.statusMessage} user={user} onSignOut={handleSignOut} activeProject={activeProjectRef.current} />
             <main className="main-content">
-                {activeTab === 'history' ? (
-                    <HistoryView
-                        onSelectConversation={handleSelectConversation}
-                        onNewChat={handleNewChat}
-                        currentConversationId={currentConversationId}
-                    />
+                {activeTab === 'projects' ? (
+                    <ProjectsView />
                 ) : activeTab === 'workflows' ? (
                     <WorkflowsView
                         onRunWorkflow={(prompt) => {
@@ -780,6 +813,9 @@ function App() {
                         user={user}
                         onSignIn={handleSignIn}
                         onSignOut={handleSignOut}
+                        onSelectConversation={handleSelectConversation}
+                        onNewChat={handleNewChat}
+                        currentConversationId={currentConversationId}
                     />
                 ) : hasMessages ? (
                     <>
@@ -808,7 +844,7 @@ function App() {
                 ) : (
                     <div className="center-logo"><Logo /></div>
                 )}
-                {activeTab !== 'history' && activeTab !== 'profile' && activeTab !== 'workflows' && (
+                {activeTab !== 'projects' && activeTab !== 'profile' && activeTab !== 'workflows' && (
                     <div className="bottom-input">
                         {!hasMessages && <PageSuggestions onSuggestionClick={handleSend} />}
                         <SearchBox onSend={handleSend} onStop={handleStop} isLoading={isLoading} selectedModel={selectedModel} onModelChange={setSelectedModel} />

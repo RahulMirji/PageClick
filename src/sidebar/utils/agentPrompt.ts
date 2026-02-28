@@ -9,6 +9,7 @@
 
 import type { PageSnapshot, CDPSnapshot } from '../../shared/messages'
 import type { TaskOrchestrator } from './taskOrchestrator'
+import type { Project } from './projectStore'
 
 // ── Shared formatting instructions ───────────────────────────────
 
@@ -108,26 +109,44 @@ function buildCDPContext(cdp: CDPSnapshot | null | undefined): string {
     return raw.length > 1500 ? raw.slice(0, 1497) + '...' : raw
 }
 
+// ── Project context builder ───────────────────────────────────────
+
+function buildProjectContext(project: Project | null | undefined): string {
+    if (!project?.instructions) return ''
+    return `PROJECT CONTEXT: "${project.icon} ${project.name}"
+The user has set the following custom instructions for this website. Follow these carefully:
+${project.instructions}
+`
+}
+
 // ── Plan prompt (replaces old clarification prompt) ──────────────
 
 export function buildClarificationPrompt(
     goal: string,
     snapshot: PageSnapshot | null,
+    project?: Project | null,
 ): string {
+    const projectContext = buildProjectContext(project)
     return `You are PageClick AI, an intelligent browser automation assistant. The user has asked you to perform a task.
 
 USER'S GOAL: "${goal}"
 
 ${buildPageContext(snapshot)}
+${projectContext ? '\n' + projectContext : ''}
 
 ${FORMATTING_RULES}
 
 YOUR JOB RIGHT NOW: Generate a CONCISE PLAN (1-2 sentences) of what you will do to accomplish the user's goal. The user will see your plan and can either PROCEED or CANCEL.
 
+YOUR CAPABILITIES:
+- You can click, type, scroll, navigate, extract data, run JS eval, download files, and ORGANIZE BROWSER TABS INTO GROUPS.
+- For tab management: you can create named color-coded tab groups, add tabs to existing groups, and list all current groups. You do this using the "tabgroup" action — you DO have direct access to the Chrome Tab Groups API.
+
 IMPORTANT RULES:
 - Do NOT ask clarifying questions. Just use whichever account, website, or page is currently active/logged in.
 - If the user says "open my Gmail" — just navigate to Gmail. Don't ask which account.
 - If the user says "find my email" — just go look. Don't ask when or which folder.
+- If the user says "group my tabs" or "organize my tabs" — use the tabgroup action. Do NOT give manual instructions.
 - Be action-oriented: describe WHAT you will do, not what you need to know.
 - Keep it to 1-2 sentences max.
 
@@ -153,11 +172,13 @@ export function buildExecutionPrompt(
     orchestrator: TaskOrchestrator,
     snapshot: PageSnapshot | null,
     cdp?: CDPSnapshot | null,
+    project?: Project | null,
 ): string {
     const state = orchestrator.getState()
     const historySummary = orchestrator.buildHistorySummary()
     const clarifications = orchestrator.buildClarificationContext()
     const cdpContext = buildCDPContext(cdp)
+    const projectContext = buildProjectContext(project)
 
     return `You are PageClick AI, an autonomous browser automation agent. You are in the EXECUTION phase — you must generate the NEXT SINGLE ACTION to take.
 
@@ -169,6 +190,7 @@ ${historySummary}
 
 ${buildPageContext(snapshot)}
 ${cdpContext ? '\n' + cdpContext : ''}
+${projectContext ? '\n' + projectContext : ''}
 
 LOOP ITERATION: ${state.loopCount + 1} / ${state.maxLoops}
 
@@ -188,7 +210,7 @@ RESPONSE FORMAT — pick ONE of these:
 Your brief explanation of what you're doing and why.
 
 <<<ACTION_PLAN>>>
-{"explanation":"what this step does","actions":[{"action":"click|input|scroll|extract|navigate|eval|download","selector":"CSS selector, JS expression for eval, or CSS selector/URL for download","value":"optional value (for eval: JS expression; for download: direct URL; for navigate: target URL)","confidence":0.95,"risk":"low|medium|high","description":"human readable step description"}]}
+{"explanation":"what this step does","actions":[{"action":"click|input|scroll|extract|navigate|eval|download|tabgroup","selector":"CSS selector, JS expression for eval, CSS selector/URL for download, or empty for tabgroup","value":"optional value (for eval: JS expression; for download: direct URL; for navigate: target URL; for tabgroup: JSON operation object)","confidence":0.95,"risk":"low|medium|high","description":"human readable step description"}]}
 <<<END_ACTION_PLAN>>>
 
 **Option B: Task checkpoint (payment, account creation, etc.)**
@@ -216,18 +238,26 @@ CRITICAL RULES:
 - If you've achieved the goal or can't make progress, emit TASK_COMPLETE.
 - Use "extract" to read visible DOM text; use "eval" to query JS state (e.g. input values, framework state).
 - Use "download" to save a file: set "selector" to a CSS selector for a link/image, or put the full URL in "value". NEVER download payment receipts or personal data.
+- Use "tabgroup" to organize browser tabs into groups. Set "selector" to "" and put a JSON object in "value" with one of these operations:
+  - Create group: {"op":"create","title":"Research","color":"blue","urls":["*github.com*","*stackoverflow.com*"]}
+  - Add to group: {"op":"add","title":"Research","urls":["*docs.google.com*"]}
+  - List groups: {"op":"list"}
+  Valid colors: grey, blue, red, yellow, green, pink, purple, cyan, orange.
+  URL patterns use * as wildcards and match against both tab URL and title.
 - If RUNTIME CONTEXT shows JS errors or network failures, factor them into your next action decision.
 `
 }
 
 // ── Info-only prompt (non-task, regular Q&A) ─────────────────────
 
-export function buildInfoPrompt(snapshot: PageSnapshot | null): string {
+export function buildInfoPrompt(snapshot: PageSnapshot | null, project?: Project | null): string {
     const pageContext = buildPageContext(snapshot)
+    const projectContext = buildProjectContext(project)
 
     return `You are PageClick AI, a helpful browser assistant. The user is asking an informational question (NOT asking you to perform an action).
 
 ${pageContext ? pageContext + '\n' : ''}
+${projectContext ? projectContext + '\n' : ''}
 ${FORMATTING_RULES}
 
 INSTRUCTIONS: Use the page context to make your response relevant. Be conversational and concise. Do NOT generate any action plan blocks — just answer naturally.
@@ -247,6 +277,8 @@ const TASK_PATTERNS = [
     /\b(download|upload)\b/i,
     /\b(book|reserve|schedule)\b/i,
     /\b(subscribe|unsubscribe)\b/i,
+    /\b(group|organize|sort|categorize)\b/i,
+    /\b(tab\s*group)/i,
     /\b(do it|do this|do that|make it|help me)\b/i,
 ]
 

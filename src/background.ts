@@ -91,7 +91,89 @@ chrome.runtime.onMessage.addListener(
             return true // keep channel open for async callback
         }
 
-        // ATTACH_DEBUGGER — attach CDP to the active tab
+        // TAB_GROUP_CREATE — create a tab group from tabs matching URL patterns
+        if (message.type === 'TAB_GROUP_CREATE') {
+            (async () => {
+                try {
+                    const { title, color, urls, collapsed } = message
+                    // Find tabs matching any of the URL patterns
+                    const allTabs = await chrome.tabs.query({ currentWindow: true })
+                    const patterns = (urls || []).map((u: string) => new RegExp(u.replace(/\*/g, '.*'), 'i'))
+                    const matchingIds = allTabs
+                        .filter(t => t.id && patterns.some((p: RegExp) => p.test(t.url || '') || p.test(t.title || '')))
+                        .map(t => t.id!)
+                    if (matchingIds.length === 0) {
+                        sendResponse({ ok: false, error: 'No tabs matched the given URL patterns' })
+                        return
+                    }
+                    const groupId = await chrome.tabs.group({ tabIds: matchingIds })
+                    const validColors = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'] as const
+                    const groupColor = validColors.includes(color) ? color : 'blue'
+                    await chrome.tabGroups.update(groupId, {
+                        title: title || 'Group',
+                        color: groupColor,
+                        collapsed: collapsed ?? false,
+                    })
+                    sendResponse({ ok: true, groupId, tabCount: matchingIds.length })
+                } catch (err: any) {
+                    sendResponse({ ok: false, error: err.message || 'Failed to create tab group' })
+                }
+            })()
+            return true
+        }
+
+        // TAB_GROUP_ADD — add tabs to an existing group by title
+        if (message.type === 'TAB_GROUP_ADD') {
+            (async () => {
+                try {
+                    const { title, urls } = message
+                    // Find the existing group by title
+                    const groups = await chrome.tabGroups.query({ title })
+                    if (groups.length === 0) {
+                        sendResponse({ ok: false, error: `No tab group found with title "${title}"` })
+                        return
+                    }
+                    const groupId = groups[0].id
+                    // Find tabs matching URL patterns
+                    const allTabs = await chrome.tabs.query({ currentWindow: true })
+                    const patterns = (urls || []).map((u: string) => new RegExp(u.replace(/\*/g, '.*'), 'i'))
+                    const matchingIds = allTabs
+                        .filter(t => t.id && t.groupId !== groupId && patterns.some((p: RegExp) => p.test(t.url || '') || p.test(t.title || '')))
+                        .map(t => t.id!)
+                    if (matchingIds.length === 0) {
+                        sendResponse({ ok: false, error: 'No ungrouped tabs matched the given patterns' })
+                        return
+                    }
+                    await chrome.tabs.group({ tabIds: matchingIds, groupId })
+                    sendResponse({ ok: true, groupId, addedCount: matchingIds.length })
+                } catch (err: any) {
+                    sendResponse({ ok: false, error: err.message || 'Failed to add tabs to group' })
+                }
+            })()
+            return true
+        }
+
+        // TAB_GROUP_LIST — list all tab groups in the current window
+        if (message.type === 'TAB_GROUP_LIST') {
+            (async () => {
+                try {
+                    const groups = await chrome.tabGroups.query({})
+                    const allTabs = await chrome.tabs.query({ currentWindow: true })
+                    const result = groups.map(g => ({
+                        id: g.id,
+                        title: g.title || '(untitled)',
+                        color: g.color,
+                        collapsed: g.collapsed,
+                        tabCount: allTabs.filter(t => t.groupId === g.id).length,
+                        tabs: allTabs.filter(t => t.groupId === g.id).map(t => ({ title: t.title, url: t.url })),
+                    }))
+                    sendResponse({ ok: true, groups: result })
+                } catch (err: any) {
+                    sendResponse({ ok: false, error: err.message || 'Failed to list tab groups' })
+                }
+            })()
+            return true
+        }
         if (message.type === 'ATTACH_DEBUGGER') {
             chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
                 const tabId = tabs[0]?.id
