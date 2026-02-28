@@ -237,41 +237,105 @@ export function buildInfoPrompt(
   const pageContext = buildPageContext(snapshot);
   const projectContext = buildProjectContext(project);
 
-  return `You are PageClick AI, a helpful browser assistant. The user is asking an informational question (NOT asking you to perform an action).
+  return `You are PageClick AI, a knowledgeable and helpful AI assistant that lives inside a browser sidebar. You can answer questions, write code, explain concepts, debug problems, and have natural conversations.
 
 ${pageContext ? pageContext + "\n" : ""}
 ${projectContext ? projectContext + "\n" : ""}
 ${FORMATTING_RULES}
 
-INSTRUCTIONS: Use the page context to make your response relevant. Be conversational and concise. Do NOT generate any action plan blocks — just answer naturally.
+INSTRUCTIONS:
+- Answer the user's question directly and helpfully.
+- If the user asks for code, provide well-formatted code blocks with the correct language tag.
+- If the current page context is relevant to their question, reference it. Otherwise, ignore it.
+- Be conversational, concise, and accurate.
+- You can use markdown formatting: bold, italic, lists, code blocks, headings, etc.
+- Do NOT generate any action plan or automation steps — just answer like a knowledgeable assistant.
+- If the user seems to want you to DO something on the page (click, navigate, fill forms), tell them to phrase it as a direct instruction like "Click the submit button" or "Navigate to gmail.com".
 `;
 }
 
 // ── Task detection heuristic ─────────────────────────────────────
 
-const TASK_PATTERNS = [
-  /\b(buy|purchase|order|shop|add to cart)\b/i,
-  /\b(click|tap|press|select|choose)\b/i,
-  /\b(go to|navigate|open|visit)\b/i,
-  /\b(search for|look for|find)\b/i,
-  /\b(type|enter|fill|write|input)\b/i,
-  /\b(scroll|swipe)\b/i,
-  /\b(sign up|sign in|login|register|log in)\b/i,
-  /\b(download|upload)\b/i,
-  /\b(clipboard|copy|paste|local file|read file|filesystem|native app)\b/i,
-  /\b(book|reserve|schedule)\b/i,
+/**
+ * Patterns that indicate conversational / informational / coding requests.
+ * If ANY of these match, we treat it as a NON-task (chat mode) unless
+ * there's a very strong browser-action signal.
+ */
+const CHAT_PATTERNS = [
+  // Code generation / explanation
+  /\b(write|generate|create|build|implement|code)\b.{0,20}\b(a |an |me |the )?(function|class|component|script|program|module|api|endpoint|code|snippet|hook|test|app|bot|server|page|website|html|css|style|algorithm|pattern|interface|type|struct|query|schema|migration|template|util|helper|service|handler|middleware|decorator|wrapper|factory|singleton|method)\b/i,
+  /\b(how (do|can|to|does|would)|what (is|are|does|was|were)|where (is|are|do)|when (is|did|does|was)|why (is|does|did|do|are)|who (is|are|was))\b/i,
+  /\b(explain|describe|summarize|translate|compare|analyze|debug|fix|refactor|review|improve|optimize|convert|rewrite)\b/i,
+  /\b(tell me|can you tell|could you|would you|what('s| is) (the|a|an)|define|meaning of)\b/i,
+  // Direct code output requests
+  /\b(give me|show me|provide)\b.{0,20}\b(code|example|snippet|function|implementation|solution|algorithm)\b/i,
+  // Questions ending with ?
+  /^[^.]{5,}\?\s*$/,
+  // Programming / technical chat
+  /\b(syntax|error|bug|issue|difference between|pros and cons|best practice|tutorial|documentation)\b/i,
+  /\b(python|javascript|typescript|java|rust|go|react|vue|angular|node|express|django|flask|sql|regex|css|html)\b.*\b(code|function|class|method|example|snippet|how)\b/i,
+];
+
+/** Strong browser-action signals that override chat patterns */
+const BROWSER_ACTION_PATTERNS = [
+  /\b(buy|purchase|order|add to cart|checkout)\b/i,
+  /\b(click|tap|press)\b.{0,30}\b(button|link|icon|menu|tab|element)\b/i,
+  /\b(go to|navigate to|open|visit)\b.{0,30}\b(page|site|website|url|link|gmail|youtube|github|google|amazon)\b/i,
+  /\b(search for|look for|find)\b.{0,40}\b(on |in |at |the page|this page|the site|this site|website)\b/i,
+  /\b(fill|fill in|fill out|complete)\b.{0,20}\b(form|field|input|application)\b/i,
+  /\b(sign up|sign in|login|log in|register|log out|sign out)\b/i,
+  /\b(download|upload)\b.{0,20}\b(file|image|document|pdf|video|from)\b/i,
+  /\b(copy|paste|clipboard)\b.{0,20}\b(to|from|this|that|text|content)\b/i,
+  /\b(book|reserve|schedule)\b.{0,30}\b(ticket|flight|hotel|appointment|meeting|slot)\b/i,
   /\b(subscribe|unsubscribe)\b/i,
-  /\b(group|organize|sort|categorize)\b/i,
-  /\b(tab\s*group)/i,
-  /\b(do it|do this|do that|make it|help me)\b/i,
+  /\b(tab\s*group|group.{0,10}tabs|organize.{0,10}tabs)\b/i,
+  /\b(scroll|swipe)\b.{0,20}\b(down|up|to|page|bottom|top)\b/i,
+  /\b(apply|submit|send|post)\b.{0,30}\b(form|application|resume|message|job|position|internship|role)\b/i,
+  /\b(read file|local file|native app|filesystem)\b/i,
+  // Very intentional action language
+  /\b(do it|do this|do that|go ahead|proceed|make it happen)\b/i,
 ];
 
 /**
  * Returns true if the user's message looks like a task request
- * (wants the agent to DO something) vs. an informational question.
+ * (wants the agent to DO something in the browser) vs. a conversational
+ * question, code request, or general chat.
+ *
+ * Logic:
+ * 1. If a chat/conversational pattern matches → NOT a task (checked first to
+ *    prevent false positives like "create a login form component")
+ * 2. If a strong browser-action pattern matches → task
+ * 3. Fallback: short imperative sentences → task, everything else → chat
  */
 export function isTaskRequest(message: string): boolean {
-  return TASK_PATTERNS.some((pattern) => pattern.test(message));
+  const trimmed = message.trim();
+
+  // Very short messages (< 4 words) that are just greetings or questions
+  const wordCount = trimmed.split(/\s+/).length;
+  if (wordCount <= 2 && /^(hi|hello|hey|thanks|thank you|ok|okay|sure|yes|no|yo|sup)$/i.test(trimmed)) {
+    return false;
+  }
+
+  // 1) Chat/conversational pattern → not a task (checked FIRST)
+  if (CHAT_PATTERNS.some((p) => p.test(trimmed))) {
+    return false;
+  }
+
+  // 2) Strong browser-action signal → task
+  if (BROWSER_ACTION_PATTERNS.some((p) => p.test(trimmed))) {
+    return true;
+  }
+
+  // 3) Fallback heuristic: short imperative sentences without a question mark
+  //    e.g. "Open Gmail", "Search Amazon for headphones"
+  if (wordCount <= 8 && !trimmed.endsWith("?") && /^[A-Z]/.test(trimmed)) {
+    // Check for at least one action-ish verb
+    if (/\b(open|go|click|search|find|type|scroll|get|check|show|close|refresh|reload|switch|move|drag|run|start|stop|enable|disable|turn|set|change|update|delete|remove|add|create|new|save|send|post|share|follow|unfollow|like|unlike|block|unblock|mute|unmute|pin|unpin|archive|star|mark|accept|reject|deny|approve|confirm|cancel|skip|next|back|previous|forward|undo|redo|play|pause|resume|select|pick|choose|grab|extract|read|scan|scrape)\b/i.test(trimmed)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 // ── Response block parsers are intentionally removed.
