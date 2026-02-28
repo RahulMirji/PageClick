@@ -3,7 +3,7 @@
 AI-powered Chrome extension with a sleek sidebar UI. Ask questions, get instant answers — powered by multiple AI models.
 
 ![Dark Theme](https://img.shields.io/badge/theme-dark-1a1b1e?style=flat-square)
-![React](https://img.shields.io/badge/React-18-61dafb?style=flat-square&logo=react)
+![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react)
 ![Vite](https://img.shields.io/badge/Vite-6-646cff?style=flat-square&logo=vite)
 ![Supabase](https://img.shields.io/badge/Supabase-Edge_Functions-3ecf8e?style=flat-square&logo=supabase)
 
@@ -16,13 +16,13 @@ AI-powered Chrome extension with a sleek sidebar UI. Ask questions, get instant 
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, TypeScript, Vite |
-| Styling | Vanilla CSS (Inter font, glassmorphism) |
-| Backend | Supabase Edge Functions (Deno) |
+| Layer     | Technology                                     |
+| --------- | ---------------------------------------------- |
+| Frontend  | React 19, TypeScript, Vite                     |
+| Styling   | Vanilla CSS (Inter font, glassmorphism)        |
+| Backend   | Supabase Edge Functions (Deno)                 |
 | AI Models | NVIDIA API (Kimi K2.5), Groq API (GPT-OSS-20B) |
-| Extension | Chrome Manifest V3, Side Panel API |
+| Extension | Chrome Manifest V3, Side Panel API             |
 
 ## Getting Started
 
