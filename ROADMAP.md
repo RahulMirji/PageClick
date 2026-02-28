@@ -1,6 +1,6 @@
 # PageClick → Claude-Level Extension Roadmap
 
-> **Current Score: 90+ / 100** — Target: **95+**
+> **Current Score: 95+ / 100** — Target: **95+ (Achieved)**
 > Last updated: 2026-02-28
 
 ---
@@ -54,34 +54,37 @@
 - [x] **#7 Context Window Management** — `tokenUtils.ts` with `trimToContextWindow` (6000-token sliding window) replaces `slice(-10)` in `callModel`
 - [x] **#20 Token Usage Display** — `~N tokens` pill badge on every completed assistant message; persisted via `META_PREFIX` encoding so it survives history reload
 - [x] **#5 Artifact Rendering** — `ArtifactViewer.tsx` with Prism syntax highlighting for 12+ languages, SVG inline preview, Copy + Download buttons; action buttons now shown on all messages
+- [x] **#12 Native Messaging** — Native host bridge (`NATIVE_HOST_CALL`) with approved ops (`clipboard.read`, `clipboard.write`, `fs.readText`), host installer script + local host implementation
+- [x] **#18 Test Coverage** — Vitest suite expanded to 22 files / 104 tests (unit + integration + jsdom DOM interaction tests across core runtime and UI flows)
+- [x] **#19 CI/CD Pipeline** — GitHub Actions CI on PRs to `dev`: lint, Prettier check, tests, coverage gate + artifact upload, build, production dependency audit
 
 ---
 
-### ❌ Missing Features (Prioritized)
+### 📌 Priority Track Status
 
 #### 🟡 Priority 2 — Important (Core Intelligence Gap)
 
-| # | Feature | Impact | Effort | Why? |
-|---|---------|--------|--------|------|
-| 6 | ~~**Debugger API Integration**~~ ✅ | +7 pts | High | Done — CDP attach/detach lifecycle, Network/Console/Runtime domains, ring buffers, `eval` action type, injected into agent prompt as RUNTIME CONTEXT |
+| #   | Feature                             | Impact | Effort | Why?                                                                                                                                                 |
+| --- | ----------------------------------- | ------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 6   | ~~**Debugger API Integration**~~ ✅ | +7 pts | High   | Done — CDP attach/detach lifecycle, Network/Console/Runtime domains, ring buffers, `eval` action type, injected into agent prompt as RUNTIME CONTEXT |
 
 #### 🟢 Priority 3 — Nice to Have (Platform Features)
 
-| # | Feature | Impact | Effort | Why? |
-|---|---------|--------|--------|------|
-| 9 | ~~**Notification System**~~ ✅ | +3 pts | Low | Done — `notifications` permission, background handler, visibility-gated alerts on task complete/fail |
-| 10 | ~~**Download Management**~~ ✅ | +3 pts | Medium | Done — `chrome.downloads` for AI-triggered file saves, per-message save button, per-conversation export button |
-| 11 | ~~**Project/Context System**~~ ✅ | +5 pts | High | Done — Supabase `projects` table, URL auto-matching, custom AI instructions per site, Projects tab with CRUD, Header badge |
-| 12 | **Native Messaging** | +3 pts | High | Communicate with desktop apps — clipboard, file system, local tools |
-| 13 | ~~**Tab Group Management**~~ ✅ | +2 pts | Medium | Done — `tabGroups` permission, AI-driven tab grouping via create/add/list ops, URL pattern matching |
-| 17 | ~~**Extension Popup**~~ ❌ Skipped | +1 pt | Low | Not needed — side panel serves as primary UI, awarded +1 pt for scope decision |
+| #   | Feature                            | Impact | Effort | Why?                                                                                                                       |
+| --- | ---------------------------------- | ------ | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| 9   | ~~**Notification System**~~ ✅     | +3 pts | Low    | Done — `notifications` permission, background handler, visibility-gated alerts on task complete/fail                       |
+| 10  | ~~**Download Management**~~ ✅     | +3 pts | Medium | Done — `chrome.downloads` for AI-triggered file saves, per-message save button, per-conversation export button             |
+| 11  | ~~**Project/Context System**~~ ✅  | +5 pts | High   | Done — Supabase `projects` table, URL auto-matching, custom AI instructions per site, Projects tab with CRUD, Header badge |
+| 12  | ~~**Native Messaging**~~ ✅        | +3 pts | High   | Done — end-to-end native host routing + safety-policy constrained local ops                                                 |
+| 13  | ~~**Tab Group Management**~~ ✅    | +2 pts | Medium | Done — `tabGroups` permission, AI-driven tab grouping via create/add/list ops, URL pattern matching                        |
+| 17  | ~~**Extension Popup**~~ ❌ Skipped | +1 pt  | Low    | Not needed — side panel serves as primary UI, awarded +1 pt for scope decision                                             |
 
 #### 🔵 Priority 4 — Polish & Production
 
-| # | Feature | Impact | Effort | Why? |
-|---|---------|--------|--------|------|
-| 18 | **Test Coverage** | +2 pts | High | Zero tests currently. Add Vitest for unit tests on safety policy, prompt parsing, orchestrator |
-| 19 | **CI/CD Pipeline** | +1 pt | Medium | GitHub Actions for build, lint, test, CRX packaging |
+| #   | Feature            | Impact | Effort | Why?                                                                                           |
+| --- | ------------------ | ------ | ------ | ---------------------------------------------------------------------------------------------- |
+| 18  | ~~**Test Coverage**~~ ✅  | +2 pts | High   | Done — broad Vitest coverage for safety, prompts, orchestrator, stores, background/content routing, DOM component flows |
+| 19  | ~~**CI/CD Pipeline**~~ ✅ | +1 pt  | Medium | Done — GitHub Actions gates for lint/format/test/coverage/build/audit on PRs to `dev`                                   |
 
 ---
 
@@ -110,14 +113,13 @@ Phase 3 — Deep Integration (DONE ✅)          → Score: 72 → 85+
 ├── ✅ #13 Tab Group Management                   (4 hrs)
 └── ❌ #17 Extension Popup — Skipped (+1 pt awarded)
 
-Phase 4 — Platform & Scale                   → Score: 85 → 90+
+Phase 4 — Platform & Scale (DONE ✅)         → Score: 85 → 95+
 ├── ✅ #11 Project/Context System                 (12 hrs)
-├── #12 Native Messaging                       (8 hrs)
-├── #18 Test Coverage                          (10 hrs)
-└── #19 CI/CD Pipeline                         (4 hrs)
+├── ✅ #12 Native Messaging                       (8 hrs)
+├── ✅ #18 Test Coverage                          (10 hrs)
+└── ✅ #19 CI/CD Pipeline                         (4 hrs)
 ```
 
 ---
 
-> **Phase 4 in progress! ✅ #11 done. Score: 90+. Next: #12 Native Messaging.**
-
+> **Phase 4 complete. Score: 95+ achieved. Remaining work is hardening/polish (coverage depth, release packaging, and branch protection).**

@@ -7,53 +7,54 @@
  * - Checkpoint detection: AI signals when payment/sensitive flows are reached
  */
 
-import type { PageSnapshot, CDPSnapshot } from '../../shared/messages'
-import type { TaskOrchestrator } from './taskOrchestrator'
-import type { Project } from './projectStore'
+import type { PageSnapshot, CDPSnapshot } from "../../shared/messages";
+import type { TaskOrchestrator } from "./taskOrchestrator";
+import type { Project } from "./projectStore";
 
 // ── Shared formatting instructions ───────────────────────────────
 
 const FORMATTING_RULES = `
 FORMATTING: You are displayed in a narrow sidebar panel (~380px wide). Prefer bullet lists or bold headings over markdown tables. Be concise.
-`.trim()
+`.trim();
 
 // ── Page context builder ─────────────────────────────────────────
 
 function buildPageContext(snapshot: PageSnapshot | null): string {
-    if (!snapshot || (!snapshot.url && !snapshot.title)) return ''
+  if (!snapshot || (!snapshot.url && !snapshot.title)) return "";
 
-    const parts = [
-        `CURRENT PAGE:`,
-        `- URL: ${snapshot.url}`,
-        `- Title: ${snapshot.title}`,
-    ]
+  const parts = [
+    `CURRENT PAGE:`,
+    `- URL: ${snapshot.url}`,
+    `- Title: ${snapshot.title}`,
+  ];
 
-    if (snapshot.description) {
-        parts.push(`- Description: ${snapshot.description}`)
-    }
+  if (snapshot.description) {
+    parts.push(`- Description: ${snapshot.description}`);
+  }
 
-    if (snapshot.nodes && snapshot.nodes.length > 0) {
-        parts.push(`- Interactive Elements (${snapshot.nodes.length}):`)
-        const summary = snapshot.nodes
-            .slice(0, 50)
-            .map((n) => {
-                let desc = `  [${n.tag}] "${n.text}"`
-                if (n.attrs?.['aria-label']) desc += ` (aria: ${n.attrs['aria-label']})`
-                if (n.attrs?.href) desc += ` → ${n.attrs.href}`
-                if (n.attrs?.role) desc += ` role=${n.attrs.role}`
-                if (n.attrs?._redacted) desc += ` [REDACTED]`
-                desc += ` @ selector: ${n.path}`
-                return desc
-            })
-            .join('\n')
-        parts.push(summary)
-    }
+  if (snapshot.nodes && snapshot.nodes.length > 0) {
+    parts.push(`- Interactive Elements (${snapshot.nodes.length}):`);
+    const summary = snapshot.nodes
+      .slice(0, 50)
+      .map((n) => {
+        let desc = `  [${n.tag}] "${n.text}"`;
+        if (n.attrs?.["aria-label"])
+          desc += ` (aria: ${n.attrs["aria-label"]})`;
+        if (n.attrs?.href) desc += ` → ${n.attrs.href}`;
+        if (n.attrs?.role) desc += ` role=${n.attrs.role}`;
+        if (n.attrs?._redacted) desc += ` [REDACTED]`;
+        desc += ` @ selector: ${n.path}`;
+        return desc;
+      })
+      .join("\n");
+    parts.push(summary);
+  }
 
-    if (snapshot.textContent) {
-        parts.push(`- Visible Content (excerpt): ${snapshot.textContent}`)
-    }
+  if (snapshot.textContent) {
+    parts.push(`- Visible Content (excerpt): ${snapshot.textContent}`);
+  }
 
-    return parts.join('\n')
+  return parts.join("\n");
 }
 
 // ── CDP context builder ───────────────────────────────────────────
@@ -63,76 +64,89 @@ function buildPageContext(snapshot: PageSnapshot | null): string {
  * a compact prompt section. Hard-capped at 1500 chars to protect token budget.
  */
 function buildCDPContext(cdp: CDPSnapshot | null | undefined): string {
-    if (!cdp?.attached) return ''
+  if (!cdp?.attached) return "";
 
-    const parts: string[] = ['RUNTIME CONTEXT (Chrome DevTools):']
+  const parts: string[] = ["RUNTIME CONTEXT (Chrome DevTools):"];
 
-    // JS errors first — highest diagnostic signal
-    if (cdp.jsErrors.length > 0) {
-        parts.push(`JS ERRORS (${cdp.jsErrors.length}):`)
-        cdp.jsErrors.slice(0, 5).forEach(e => parts.push(`  ❌ ${e}`))
+  // JS errors first — highest diagnostic signal
+  if (cdp.jsErrors.length > 0) {
+    parts.push(`JS ERRORS (${cdp.jsErrors.length}):`);
+    cdp.jsErrors.slice(0, 5).forEach((e) => parts.push(`  ❌ ${e}`));
+  }
+
+  // Console: surface warn/error only (reduces noise)
+  const importantConsole = cdp.consoleLog.filter(
+    (m) => m.level === "error" || m.level === "warn",
+  );
+  if (importantConsole.length > 0) {
+    parts.push(`CONSOLE WARNINGS/ERRORS (${importantConsole.length}):`);
+    importantConsole
+      .slice(0, 5)
+      .forEach((m) =>
+        parts.push(`  [${m.level.toUpperCase()}] ${m.text.slice(0, 200)}`),
+      );
+  }
+
+  // Network: failures first, then recent successes with JSON bodies
+  if (cdp.networkLog.length > 0) {
+    const failures = cdp.networkLog.filter(
+      (r) => r.failed || (r.status !== undefined && r.status >= 400),
+    );
+    const successes = cdp.networkLog.filter(
+      (r) => !r.failed && r.status !== undefined && r.status < 400,
+    );
+
+    if (failures.length > 0) {
+      parts.push(`NETWORK FAILURES (${failures.length}):`);
+      failures
+        .slice(0, 5)
+        .forEach((r) =>
+          parts.push(
+            `  ❌ ${r.method} ${r.url} → ${r.status ?? "failed"} ${r.failureText ?? ""}`,
+          ),
+        );
     }
 
-    // Console: surface warn/error only (reduces noise)
-    const importantConsole = cdp.consoleLog.filter(m => m.level === 'error' || m.level === 'warn')
-    if (importantConsole.length > 0) {
-        parts.push(`CONSOLE WARNINGS/ERRORS (${importantConsole.length}):`)
-        importantConsole.slice(0, 5).forEach(m =>
-            parts.push(`  [${m.level.toUpperCase()}] ${m.text.slice(0, 200)}`)
-        )
+    if (successes.length > 0) {
+      parts.push(`RECENT API CALLS (${successes.length}):`);
+      successes.slice(0, 5).forEach((r) => {
+        let line = `  ✅ ${r.method} ${r.url} → ${r.status}`;
+        if (r.responseBody)
+          line += `\n     Response: ${r.responseBody.slice(0, 300)}`;
+        parts.push(line);
+      });
     }
+  }
 
-    // Network: failures first, then recent successes with JSON bodies
-    if (cdp.networkLog.length > 0) {
-        const failures = cdp.networkLog.filter(r => r.failed || (r.status !== undefined && r.status >= 400))
-        const successes = cdp.networkLog.filter(r => !r.failed && r.status !== undefined && r.status < 400)
-
-        if (failures.length > 0) {
-            parts.push(`NETWORK FAILURES (${failures.length}):`)
-            failures.slice(0, 5).forEach(r =>
-                parts.push(`  ❌ ${r.method} ${r.url} → ${r.status ?? 'failed'} ${r.failureText ?? ''}`)
-            )
-        }
-
-        if (successes.length > 0) {
-            parts.push(`RECENT API CALLS (${successes.length}):`)
-            successes.slice(0, 5).forEach(r => {
-                let line = `  ✅ ${r.method} ${r.url} → ${r.status}`
-                if (r.responseBody) line += `\n     Response: ${r.responseBody.slice(0, 300)}`
-                parts.push(line)
-            })
-        }
-    }
-
-    const raw = parts.join('\n')
-    // Hard cap to protect the 6000-token context window budget
-    return raw.length > 1500 ? raw.slice(0, 1497) + '...' : raw
+  const raw = parts.join("\n");
+  // Hard cap to protect the 6000-token context window budget
+  return raw.length > 1500 ? raw.slice(0, 1497) + "..." : raw;
 }
 
 // ── Project context builder ───────────────────────────────────────
 
 function buildProjectContext(project: Project | null | undefined): string {
-    if (!project?.instructions) return ''
-    return `PROJECT CONTEXT: "${project.icon} ${project.name}"
+  if (!project?.instructions) return "";
+  return `PROJECT CONTEXT: "${project.icon} ${project.name}"
 The user has set the following custom instructions for this website. Follow these carefully:
 ${project.instructions}
-`
+`;
 }
 
 // ── Plan prompt (replaces old clarification prompt) ──────────────
 
 export function buildClarificationPrompt(
-    goal: string,
-    snapshot: PageSnapshot | null,
-    project?: Project | null,
+  goal: string,
+  snapshot: PageSnapshot | null,
+  project?: Project | null,
 ): string {
-    const projectContext = buildProjectContext(project)
-    return `You are PageClick AI, an intelligent browser automation assistant. The user has asked you to perform a task.
+  const projectContext = buildProjectContext(project);
+  return `You are PageClick AI, an intelligent browser automation assistant. The user has asked you to perform a task.
 
 USER'S GOAL: "${goal}"
 
 ${buildPageContext(snapshot)}
-${projectContext ? '\n' + projectContext : ''}
+${projectContext ? "\n" + projectContext : ""}
 
 ${FORMATTING_RULES}
 
@@ -141,6 +155,7 @@ YOUR JOB RIGHT NOW: Generate a CONCISE PLAN (1-2 sentences) of what you will do 
 YOUR CAPABILITIES:
 - You can click, type, scroll, navigate, extract data, run JS eval, download files, and ORGANIZE BROWSER TABS INTO GROUPS.
 - For tab management: you can create named color-coded tab groups, add tabs to existing groups, and list all current groups. You do this using the "tabgroup" action — you DO have direct access to the Chrome Tab Groups API.
+- You can call approved local native operations through a secure bridge using the "native" action.
 
 IMPORTANT RULES:
 - Do NOT ask clarifying questions. Just use whichever account, website, or page is currently active/logged in.
@@ -163,24 +178,24 @@ Only if truly stuck:
 <<<ASK_USER>>>
 {"questions":["What's your budget range?","Any brand preference?"]}
 <<<END_ASK_USER>>>
-`
+`;
 }
 
 // ── Execution prompt (single-step) ───────────────────────────────
 
 export function buildExecutionPrompt(
-    orchestrator: TaskOrchestrator,
-    snapshot: PageSnapshot | null,
-    cdp?: CDPSnapshot | null,
-    project?: Project | null,
+  orchestrator: TaskOrchestrator,
+  snapshot: PageSnapshot | null,
+  cdp?: CDPSnapshot | null,
+  project?: Project | null,
 ): string {
-    const state = orchestrator.getState()
-    const historySummary = orchestrator.buildHistorySummary()
-    const clarifications = orchestrator.buildClarificationContext()
-    const cdpContext = buildCDPContext(cdp)
-    const projectContext = buildProjectContext(project)
+  const state = orchestrator.getState();
+  const historySummary = orchestrator.buildHistorySummary();
+  const clarifications = orchestrator.buildClarificationContext();
+  const cdpContext = buildCDPContext(cdp);
+  const projectContext = buildProjectContext(project);
 
-    return `You are PageClick AI, an autonomous browser automation agent. You are in the EXECUTION phase — you must generate the NEXT SINGLE ACTION to take.
+  return `You are PageClick AI, an autonomous browser automation agent. You are in the EXECUTION phase — you must generate the NEXT SINGLE ACTION to take.
 
 TASK GOAL: "${state.goal}"
 
@@ -189,8 +204,8 @@ ${clarifications}
 ${historySummary}
 
 ${buildPageContext(snapshot)}
-${cdpContext ? '\n' + cdpContext : ''}
-${projectContext ? '\n' + projectContext : ''}
+${cdpContext ? "\n" + cdpContext : ""}
+${projectContext ? "\n" + projectContext : ""}
 
 LOOP ITERATION: ${state.loopCount + 1} / ${state.maxLoops}
 
@@ -210,7 +225,7 @@ RESPONSE FORMAT — pick ONE of these:
 Your brief explanation of what you're doing and why.
 
 <<<ACTION_PLAN>>>
-{"explanation":"what this step does","actions":[{"action":"click|input|scroll|extract|navigate|eval|download|tabgroup","selector":"CSS selector, JS expression for eval, CSS selector/URL for download, or empty for tabgroup","value":"optional value (for eval: JS expression; for download: direct URL; for navigate: target URL; for tabgroup: JSON operation object)","confidence":0.95,"risk":"low|medium|high","description":"human readable step description"}]}
+{"explanation":"what this step does","actions":[{"action":"click|input|scroll|extract|navigate|eval|download|tabgroup|native","selector":"CSS selector, JS expression for eval, CSS selector/URL for download, or empty for tabgroup/native","value":"optional value (for eval: JS expression; for download: direct URL; for navigate: target URL; for tabgroup/native: JSON operation object)","confidence":0.95,"risk":"low|medium|high","description":"human readable step description"}]}
 <<<END_ACTION_PLAN>>>
 
 **Option B: Task checkpoint (payment, account creation, etc.)**
@@ -244,123 +259,176 @@ CRITICAL RULES:
   - List groups: {"op":"list"}
   Valid colors: grey, blue, red, yellow, green, pink, purple, cyan, orange.
   URL patterns use * as wildcards and match against both tab URL and title.
+- Use "native" for local-tool actions. Set "selector" to "" and set "value" to JSON:
+  {"op":"clipboard.read","args":{}}
+  {"op":"clipboard.write","args":{"text":"Hello"}}
+  {"op":"fs.readText","args":{"path":"~/Documents/notes.txt"}}
+  Only use these 3 native ops. Never request passwords, payment data, API keys, or auth tokens.
+- For clipboard requests, DO NOT use eval/document.execCommand/navigator.clipboard scripts. Always use the native action.
 - If RUNTIME CONTEXT shows JS errors or network failures, factor them into your next action decision.
-`
+`;
 }
 
 // ── Info-only prompt (non-task, regular Q&A) ─────────────────────
 
-export function buildInfoPrompt(snapshot: PageSnapshot | null, project?: Project | null): string {
-    const pageContext = buildPageContext(snapshot)
-    const projectContext = buildProjectContext(project)
+export function buildInfoPrompt(
+  snapshot: PageSnapshot | null,
+  project?: Project | null,
+): string {
+  const pageContext = buildPageContext(snapshot);
+  const projectContext = buildProjectContext(project);
 
-    return `You are PageClick AI, a helpful browser assistant. The user is asking an informational question (NOT asking you to perform an action).
+  return `You are PageClick AI, a helpful browser assistant. The user is asking an informational question (NOT asking you to perform an action).
 
-${pageContext ? pageContext + '\n' : ''}
-${projectContext ? projectContext + '\n' : ''}
+${pageContext ? pageContext + "\n" : ""}
+${projectContext ? projectContext + "\n" : ""}
 ${FORMATTING_RULES}
 
 INSTRUCTIONS: Use the page context to make your response relevant. Be conversational and concise. Do NOT generate any action plan blocks — just answer naturally.
-`
+`;
 }
 
 // ── Task detection heuristic ─────────────────────────────────────
 
 const TASK_PATTERNS = [
-    /\b(buy|purchase|order|shop|add to cart)\b/i,
-    /\b(click|tap|press|select|choose)\b/i,
-    /\b(go to|navigate|open|visit)\b/i,
-    /\b(search for|look for|find)\b/i,
-    /\b(type|enter|fill|write|input)\b/i,
-    /\b(scroll|swipe)\b/i,
-    /\b(sign up|sign in|login|register|log in)\b/i,
-    /\b(download|upload)\b/i,
-    /\b(book|reserve|schedule)\b/i,
-    /\b(subscribe|unsubscribe)\b/i,
-    /\b(group|organize|sort|categorize)\b/i,
-    /\b(tab\s*group)/i,
-    /\b(do it|do this|do that|make it|help me)\b/i,
-]
+  /\b(buy|purchase|order|shop|add to cart)\b/i,
+  /\b(click|tap|press|select|choose)\b/i,
+  /\b(go to|navigate|open|visit)\b/i,
+  /\b(search for|look for|find)\b/i,
+  /\b(type|enter|fill|write|input)\b/i,
+  /\b(scroll|swipe)\b/i,
+  /\b(sign up|sign in|login|register|log in)\b/i,
+  /\b(download|upload)\b/i,
+  /\b(clipboard|copy|paste|local file|read file|filesystem|native app)\b/i,
+  /\b(book|reserve|schedule)\b/i,
+  /\b(subscribe|unsubscribe)\b/i,
+  /\b(group|organize|sort|categorize)\b/i,
+  /\b(tab\s*group)/i,
+  /\b(do it|do this|do that|make it|help me)\b/i,
+];
 
 /**
  * Returns true if the user's message looks like a task request
  * (wants the agent to DO something) vs. an informational question.
  */
 export function isTaskRequest(message: string): boolean {
-    return TASK_PATTERNS.some(pattern => pattern.test(message))
+  return TASK_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 // ── Response block parsers ───────────────────────────────────────
 
-export function parseAskUser(response: string): { found: boolean; block?: { questions: string[] }; cleanContent: string } {
-    const match = response.match(/<<<ASK_USER>>>\s*([\s\S]*?)\s*<<<END_ASK_USER>>>/)
-    if (!match) return { found: false, cleanContent: response }
+export function parseAskUser(response: string): {
+  found: boolean;
+  block?: { questions: string[] };
+  cleanContent: string;
+} {
+  const match = response.match(
+    /<<<ASK_USER>>>\s*([\s\S]*?)\s*<<<END_ASK_USER>>>/,
+  );
+  if (!match) return { found: false, cleanContent: response };
 
-    try {
-        const block = JSON.parse(match[1].trim())
-        const cleanContent = response.replace(/<<<ASK_USER>>>\s*[\s\S]*?\s*<<<END_ASK_USER>>>/, '').trim()
-        return { found: true, block, cleanContent }
-    } catch {
-        return { found: false, cleanContent: response }
-    }
+  try {
+    const block = JSON.parse(match[1].trim());
+    const cleanContent = response
+      .replace(/<<<ASK_USER>>>\s*[\s\S]*?\s*<<<END_ASK_USER>>>/, "")
+      .trim();
+    return { found: true, block, cleanContent };
+  } catch {
+    return { found: false, cleanContent: response };
+  }
 }
 
-export function parseTaskReady(response: string): { found: boolean; block?: { ready: boolean; summary: string }; cleanContent: string } {
-    const match = response.match(/<<<TASK_READY>>>\s*([\s\S]*?)\s*<<<END_TASK_READY>>>/)
-    if (!match) return { found: false, cleanContent: response }
+export function parseTaskReady(response: string): {
+  found: boolean;
+  block?: { ready: boolean; summary: string };
+  cleanContent: string;
+} {
+  const match = response.match(
+    /<<<TASK_READY>>>\s*([\s\S]*?)\s*<<<END_TASK_READY>>>/,
+  );
+  if (!match) return { found: false, cleanContent: response };
 
-    try {
-        const block = JSON.parse(match[1].trim())
-        const cleanContent = response.replace(/<<<TASK_READY>>>\s*[\s\S]*?\s*<<<END_TASK_READY>>>/, '').trim()
-        return { found: true, block, cleanContent }
-    } catch {
-        return { found: false, cleanContent: response }
-    }
+  try {
+    const block = JSON.parse(match[1].trim());
+    const cleanContent = response
+      .replace(/<<<TASK_READY>>>\s*[\s\S]*?\s*<<<END_TASK_READY>>>/, "")
+      .trim();
+    return { found: true, block, cleanContent };
+  } catch {
+    return { found: false, cleanContent: response };
+  }
 }
 
-export function parseActionPlan(response: string): { found: boolean; block?: { explanation: string; actions: any[] }; cleanContent: string } {
-    const match = response.match(/<<<ACTION_PLAN>>>\s*([\s\S]*?)\s*<<<(?:END_ACTION_PLAN|_ACTION_PLAN)>>>/)
-    if (!match) return { found: false, cleanContent: response }
+export function parseActionPlan(response: string): {
+  found: boolean;
+  block?: { explanation: string; actions: any[] };
+  cleanContent: string;
+} {
+  const match = response.match(
+    /<<<ACTION_PLAN>>>\s*([\s\S]*?)\s*<<<(?:END_ACTION_PLAN|_ACTION_PLAN)>>>/,
+  );
+  if (!match) return { found: false, cleanContent: response };
 
-    try {
-        let json = match[1].trim()
-        // Repair common JSON issues
-        json = json.replace(/"(\s*)"(\s*)(\w)/g, '",$1"$2$3')
-        json = json.replace(/"([a-z]+)"(\s*)"([a-z])/gi, '"$1",$2"$3')
-        json = json.replace(/([^\\])\n/g, '$1\\n')
-        json = json.replace(/,\s*([}\]])/g, '$1')
+  try {
+    let json = match[1].trim();
+    // Repair common JSON issues
+    json = json.replace(/"(\s*)"(\s*)(\w)/g, '",$1"$2$3');
+    json = json.replace(/"([a-z]+)"(\s*)"([a-z])/gi, '"$1",$2"$3');
+    json = json.replace(/([^\\])\n/g, "$1\\n");
+    json = json.replace(/,\s*([}\]])/g, "$1");
 
-        const block = JSON.parse(json)
-        const cleanContent = response.replace(/<<<ACTION_PLAN>>>\s*[\s\S]*?\s*<<<(?:END_ACTION_PLAN|_ACTION_PLAN)>>>/, '').trim()
-        return { found: true, block, cleanContent }
-    } catch (e) {
-        console.error('[agentPrompt] Failed to parse ACTION_PLAN:', e)
-        return { found: false, cleanContent: response }
-    }
+    const block = JSON.parse(json);
+    const cleanContent = response
+      .replace(
+        /<<<ACTION_PLAN>>>\s*[\s\S]*?\s*<<<(?:END_ACTION_PLAN|_ACTION_PLAN)>>>/,
+        "",
+      )
+      .trim();
+    return { found: true, block, cleanContent };
+  } catch (e) {
+    console.error("[agentPrompt] Failed to parse ACTION_PLAN:", e);
+    return { found: false, cleanContent: response };
+  }
 }
 
-export function parseCheckpoint(response: string): { found: boolean; block?: { reason: string; message: string; canSkip: boolean }; cleanContent: string } {
-    const match = response.match(/<<<CHECKPOINT>>>\s*([\s\S]*?)\s*<<<END_CHECKPOINT>>>/)
-    if (!match) return { found: false, cleanContent: response }
+export function parseCheckpoint(response: string): {
+  found: boolean;
+  block?: { reason: string; message: string; canSkip: boolean };
+  cleanContent: string;
+} {
+  const match = response.match(
+    /<<<CHECKPOINT>>>\s*([\s\S]*?)\s*<<<END_CHECKPOINT>>>/,
+  );
+  if (!match) return { found: false, cleanContent: response };
 
-    try {
-        const block = JSON.parse(match[1].trim())
-        const cleanContent = response.replace(/<<<CHECKPOINT>>>\s*[\s\S]*?\s*<<<END_CHECKPOINT>>>/, '').trim()
-        return { found: true, block, cleanContent }
-    } catch {
-        return { found: false, cleanContent: response }
-    }
+  try {
+    const block = JSON.parse(match[1].trim());
+    const cleanContent = response
+      .replace(/<<<CHECKPOINT>>>\s*[\s\S]*?\s*<<<END_CHECKPOINT>>>/, "")
+      .trim();
+    return { found: true, block, cleanContent };
+  } catch {
+    return { found: false, cleanContent: response };
+  }
 }
 
-export function parseTaskComplete(response: string): { found: boolean; block?: { summary: string; nextSteps: string[] }; cleanContent: string } {
-    const match = response.match(/<<<TASK_COMPLETE>>>\s*([\s\S]*?)\s*<<<END_TASK_COMPLETE>>>/)
-    if (!match) return { found: false, cleanContent: response }
+export function parseTaskComplete(response: string): {
+  found: boolean;
+  block?: { summary: string; nextSteps: string[] };
+  cleanContent: string;
+} {
+  const match = response.match(
+    /<<<TASK_COMPLETE>>>\s*([\s\S]*?)\s*<<<END_TASK_COMPLETE>>>/,
+  );
+  if (!match) return { found: false, cleanContent: response };
 
-    try {
-        const block = JSON.parse(match[1].trim())
-        const cleanContent = response.replace(/<<<TASK_COMPLETE>>>\s*[\s\S]*?\s*<<<END_TASK_COMPLETE>>>/, '').trim()
-        return { found: true, block, cleanContent }
-    } catch {
-        return { found: false, cleanContent: response }
-    }
+  try {
+    const block = JSON.parse(match[1].trim());
+    const cleanContent = response
+      .replace(/<<<TASK_COMPLETE>>>\s*[\s\S]*?\s*<<<END_TASK_COMPLETE>>>/, "")
+      .trim();
+    return { found: true, block, cleanContent };
+  } catch {
+    return { found: false, cleanContent: response };
+  }
 }

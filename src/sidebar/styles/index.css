@@ -2,7 +2,7 @@
    PageClick Sidebar — Light Theme Styles
    ============================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@700;800&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@700;800&display=swap");
 
 * {
   margin: 0;
@@ -41,7 +41,13 @@ body {
   min-width: 420px;
   height: 100%;
   overflow: hidden;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family:
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 14px;
@@ -280,7 +286,6 @@ body {
 }
 
 @keyframes skeletonPulse {
-
   0%,
   100% {
     opacity: 0.4;
@@ -300,12 +305,13 @@ body {
 
 .logo-icon-large {
   border-radius: 18px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    0 2px 8px rgba(0, 0, 0, 0.08);
   animation: float 4s ease-in-out infinite;
 }
 
 @keyframes float {
-
   0%,
   100% {
     transform: translateY(0);
@@ -318,7 +324,7 @@ body {
 
 .logo-name {
   font-size: 18px;
-  font-family: 'Inter', sans-serif;
+  font-family: "Inter", sans-serif;
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.2px;
@@ -813,7 +819,7 @@ body {
   margin-bottom: 4px;
 }
 
-.markdown-body li>p {
+.markdown-body li > p {
   margin: 0;
 }
 
@@ -873,7 +879,7 @@ body {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 12.5px;
-  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
   color: var(--text-primary);
 }
 
@@ -999,7 +1005,6 @@ body {
 }
 
 @keyframes thinkingPulse {
-
   0%,
   100% {
     opacity: 0.3;
@@ -1331,7 +1336,7 @@ body {
 }
 
 .action-step-detail-row code {
-  font-family: 'SF Mono', Menlo, monospace;
+  font-family: "SF Mono", Menlo, monospace;
   font-size: 10.5px;
   color: var(--text-secondary);
   background: var(--bg-tertiary);
@@ -1493,7 +1498,7 @@ body {
 
 .confirm-step-action code,
 .confirm-step-value code {
-  font-family: 'SF Mono', Menlo, monospace;
+  font-family: "SF Mono", Menlo, monospace;
   font-size: 11px;
   background: rgba(0, 0, 0, 0.06);
   padding: 1px 4px;
@@ -1907,7 +1912,9 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 0 0 1px var(--border-subtle);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.15),
+    0 0 0 1px var(--border-subtle);
   animation: authCardSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -1967,7 +1974,10 @@ body {
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Inter', -apple-system, sans-serif;
+  font-family:
+    "Inter",
+    -apple-system,
+    sans-serif;
   font-size: 14px;
   font-weight: 500;
   color: #3c4043;
@@ -1997,7 +2007,7 @@ body {
   width: 18px;
   height: 18px;
   border: 2px solid #dadce0;
-  border-top-color: #4285F4;
+  border-top-color: #4285f4;
   border-radius: 50%;
   animation: __pc-spin 0.8s linear infinite;
   flex-shrink: 0;
@@ -2299,7 +2309,12 @@ body {
 
 .skeleton-text {
   height: 12px;
-  background: linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-primary) 50%, var(--bg-secondary) 75%);
+  background: linear-gradient(
+    90deg,
+    var(--bg-secondary) 25%,
+    var(--bg-primary) 50%,
+    var(--bg-secondary) 75%
+  );
   background-size: 200% 100%;
   border-radius: 6px;
   animation: shimmer 1.5s infinite;
@@ -2361,7 +2376,11 @@ body {
   flex-direction: column;
   align-items: center;
   padding: 28px 16px 22px;
-  background: linear-gradient(145deg, rgba(0, 212, 255, 0.07) 0%, rgba(0, 140, 200, 0.03) 100%);
+  background: linear-gradient(
+    145deg,
+    rgba(0, 212, 255, 0.07) 0%,
+    rgba(0, 140, 200, 0.03) 100%
+  );
   border: 1px solid var(--border-subtle);
   border-radius: 16px;
   gap: 6px;
@@ -2416,7 +2435,7 @@ body {
   align-items: center;
   gap: 5px;
   padding: 4px 12px;
-  background: linear-gradient(135deg, #00D4FF 0%, #0088cc 100%);
+  background: linear-gradient(135deg, #00d4ff 0%, #0088cc 100%);
   color: #fff;
   border-radius: 100px;
   font-size: 11px;
@@ -2669,7 +2688,11 @@ body {
   width: 80px;
   height: 80px;
   border-radius: 50%;
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.08), rgba(0, 140, 200, 0.04));
+  background: linear-gradient(
+    135deg,
+    rgba(0, 212, 255, 0.08),
+    rgba(0, 140, 200, 0.04)
+  );
   border: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
@@ -2738,7 +2761,10 @@ body {
   border-radius: 10px;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Inter', -apple-system, sans-serif;
+  font-family:
+    "Inter",
+    -apple-system,
+    sans-serif;
   font-size: 14px;
   font-weight: 500;
   color: #3c4043;
@@ -2852,7 +2878,11 @@ body {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(0, 140, 200, 0.06));
+  background: linear-gradient(
+    135deg,
+    rgba(0, 212, 255, 0.1),
+    rgba(0, 140, 200, 0.06)
+  );
   color: var(--accent);
   flex-shrink: 0;
 }
@@ -2909,7 +2939,12 @@ body {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-primary) 50%, var(--bg-secondary) 75%);
+  background: linear-gradient(
+    90deg,
+    var(--bg-secondary) 25%,
+    var(--bg-primary) 50%,
+    var(--bg-secondary) 75%
+  );
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
   flex-shrink: 0;
@@ -2954,7 +2989,11 @@ body {
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.08), rgba(0, 140, 200, 0.04));
+  background: linear-gradient(
+    135deg,
+    rgba(0, 212, 255, 0.08),
+    rgba(0, 140, 200, 0.04)
+  );
   border: 1px solid rgba(0, 212, 255, 0.15);
   border-radius: 100px;
   margin: 4px 12px 0;
@@ -3343,7 +3382,7 @@ body {
 .artifact-pre {
   margin: 0;
   padding: 12px 16px;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
   font-size: 12.5px;
   line-height: 1.65;
   background: transparent;

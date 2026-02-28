@@ -7,7 +7,7 @@
  *  3. formatConversationAsMarkdown() — conversation export formatter
  */
 
-import type { Message } from '../components/ChatView'
+import type { Message } from "../components/ChatView";
 
 // ── Remote URL download (via background + chrome.downloads) ─────────────
 
@@ -21,20 +21,20 @@ import type { Message } from '../components/ChatView'
  * @param saveAs   If true, shows the native save-as dialog (default: false)
  */
 export async function downloadUrl(
-    url: string,
-    filename?: string,
-    saveAs = false,
+  url: string,
+  filename?: string,
+  saveAs = false,
 ): Promise<{ ok: boolean; error?: string }> {
-    try {
-        return await chrome.runtime.sendMessage({
-            type: 'DOWNLOAD_FILE',
-            url,
-            filename: filename || undefined,
-            saveAs,
-        })
-    } catch (e: any) {
-        return { ok: false, error: e.message }
-    }
+  try {
+    return await chrome.runtime.sendMessage({
+      type: "DOWNLOAD_FILE",
+      url,
+      filename: filename || undefined,
+      saveAs,
+    });
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
 }
 
 // ── In-memory text download (blob URL, sidebar context) ─────────────────
@@ -49,19 +49,19 @@ export async function downloadUrl(
  * @param mimeType MIME type, defaults to text/markdown
  */
 export function downloadText(
-    content: string,
-    filename: string,
-    mimeType = 'text/markdown',
+  content: string,
+  filename: string,
+  mimeType = "text/markdown",
 ): void {
-    const blob = new Blob([content], { type: mimeType })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── Conversation export formatter ────────────────────────────────────────
@@ -71,35 +71,37 @@ export function downloadText(
  * Strips internal structured blocks (<<<TAG>>>) and metadata prefixes.
  */
 export function formatConversationAsMarkdown(
-    title: string,
-    messages: Message[],
-    exportedAt = new Date(),
+  title: string,
+  messages: Message[],
+  exportedAt = new Date(),
 ): string {
-    const dateStr = exportedAt.toLocaleDateString(undefined, {
-        year: 'numeric', month: 'long', day: 'numeric',
+  const dateStr = exportedAt.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const header = [
+    `# ${title}`,
+    ``,
+    `_Exported from PageClick · ${dateStr}_`,
+    ``,
+    `---`,
+    ``,
+  ].join("\n");
+
+  const body = messages
+    .filter((m) => m.content.trim().length > 0)
+    .map((m) => {
+      const label = m.role === "user" ? "### 👤 You" : "### 🤖 PageClick";
+      // Strip any residual structured blocks from assistant messages
+      const text = m.content
+        .replace(/<<<[A-Z_]+>>>[\s\S]*?<<<END_[A-Z_]+>>>/g, "")
+        .replace(/<<<[A-Z_]+>>>/g, "")
+        .trim();
+      return `${label}\n\n${text}`;
     })
+    .join("\n\n---\n\n");
 
-    const header = [
-        `# ${title}`,
-        ``,
-        `_Exported from PageClick · ${dateStr}_`,
-        ``,
-        `---`,
-        ``,
-    ].join('\n')
-
-    const body = messages
-        .filter(m => m.content.trim().length > 0)
-        .map(m => {
-            const label = m.role === 'user' ? '### 👤 You' : '### 🤖 PageClick'
-            // Strip any residual structured blocks from assistant messages
-            const text = m.content
-                .replace(/<<<[A-Z_]+>>>[\s\S]*?<<<END_[A-Z_]+>>>/g, '')
-                .replace(/<<<[A-Z_]+>>>/g, '')
-                .trim()
-            return `${label}\n\n${text}`
-        })
-        .join('\n\n---\n\n')
-
-    return header + body + '\n'
+  return header + body + "\n";
 }

@@ -10,14 +10,16 @@
  */
 
 export function requestTaskNotification(title: string, message: string): void {
-    // Don't notify if the user is already looking at the panel
-    if (document.visibilityState === 'visible') return
+  // Don't notify if the user is already looking at the panel
+  if (document.visibilityState === "visible") return;
 
-    chrome.runtime.sendMessage({
-        type: 'SHOW_NOTIFICATION',
-        title,
-        message,
-    }).catch(() => {
-        // Panel may have been unloaded — background will still handle it
+  chrome.runtime
+    .sendMessage({
+      type: "SHOW_NOTIFICATION",
+      title,
+      message,
     })
+    .catch(() => {
+      // Panel may have been unloaded — background will still handle it
+    });
 }

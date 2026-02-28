@@ -15,6 +15,7 @@ A **hybrid architecture** (Chrome extension + optional cloud inference) is the r
 - **Cloud** does: heavy multimodal reasoning + action planning (Kimi K2.5 as primary), with fallback to frontier cloud models or a local/offline mode.
 
 This balances:
+
 - **Responsiveness** (small local logic; parallel capture + streaming suggestions)
 - **Privacy** (local redaction & policy gate; user-controlled vision capture)
 - **Capability** (full-strength multimodal model for grounding + tool orchestration)
@@ -28,6 +29,7 @@ This balances:
 **Core capability**: mapping **(DOM + viewport screenshot + goal)** → **ordered, grounded DOM actions** is feasible today, but reliability varies with site complexity.
 
 Typical hard cases:
+
 - SPAs with continuous DOM churn (React/Next/Vue), virtualized lists
 - Shadow DOM / Web Components
 - Cross-origin iframes
@@ -35,6 +37,7 @@ Typical hard cases:
 - Highly personalized / AB-tested pages (selector drift)
 
 **Design implication**: the system should be built around:
+
 - robust selectors (aria-label/role/data-testid > id > class > path)
 - verification checks (expectText/expectRole/expectBBox)
 - step-by-step execution with observation & retry
@@ -53,6 +56,7 @@ A Perplexity-like UX is feasible via Chrome’s **Side Panel API** (persistent s
 ### 1.3 Legal / policy feasibility
 
 Feasible if built with:
+
 - least-privilege permissions
 - transparent disclosure of data usage
 - no remote code execution (Manifest V3 constraints)
@@ -66,30 +70,32 @@ Feasible if built with:
 
 ### 2.1 Architecture options
 
-| Option | Summary | Pros | Cons | Best for |
-|---|---|---|---|---|
-| Client-only | WebGPU / local inference | Max privacy; offline | Hard to do strong vision+agents; big downloads; slower on weak devices | privacy-first, power users |
-| **Hybrid (recommended)** | extension + cloud model | strong capability + decent privacy; scalable | some data leaves device; needs policy layer | mainstream product |
-| Cloud-only | send everything to cloud | simplest | weakest privacy; riskier compliance | internal tooling |
+| Option                   | Summary                  | Pros                                         | Cons                                                                   | Best for                   |
+| ------------------------ | ------------------------ | -------------------------------------------- | ---------------------------------------------------------------------- | -------------------------- |
+| Client-only              | WebGPU / local inference | Max privacy; offline                         | Hard to do strong vision+agents; big downloads; slower on weak devices | privacy-first, power users |
+| **Hybrid (recommended)** | extension + cloud model  | strong capability + decent privacy; scalable | some data leaves device; needs policy layer                            | mainstream product         |
+| Cloud-only               | send everything to cloud | simplest                                     | weakest privacy; riskier compliance                                    | internal tooling           |
 
 ### 2.2 Hybrid data flow
 
-1) Sidebar captures user goal
-2) Content script builds compact page state:
+1. Sidebar captures user goal
+2. Content script builds compact page state:
+
 - DOM snapshot (compact)
 - visible text (limited)
 - page URL/title
 - optional screenshot (explicit toggle)
 
-3) Local redaction + policy gate (password/payment blocking)
-4) Model API returns:
+3. Local redaction + policy gate (password/payment blocking)
+4. Model API returns:
+
 - answer text
 - **action plan JSON** (selectors + verification)
 - confidence + risk flags
 
-5) Sidebar previews actions
-6) On user confirm: execute actions sequentially in content script with wait/retry
-7) Report status back to sidebar (step success/failure)
+5. Sidebar previews actions
+6. On user confirm: execute actions sequentially in content script with wait/retry
+7. Report status back to sidebar (step success/failure)
 
 ---
 
@@ -113,6 +119,7 @@ Feasible if built with:
 ### 3.3 Safety policy layer
 
 Default safe rules:
+
 - Never click buttons whose accessible name matches: `Pay`, `Place order`, `Buy`, `Checkout`, `Confirm`, `Delete`, `Remove`, `Close account`
 - Never submit forms automatically
 - Require explicit confirmation for:
@@ -133,9 +140,9 @@ Default safe rules:
   "description": "Perplexity-style sidebar assistant that understands pages and suggests safe actions.",
   "permissions": ["activeTab", "scripting", "storage", "sidePanel"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
-  "background": {"service_worker": "background.js", "type": "module"},
-  "side_panel": {"default_path": "sidebar.html"},
-  "action": {"default_title": "Open Assistant"},
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "sidebar.html" },
+  "action": { "default_title": "Open Assistant" },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   }
@@ -143,6 +150,7 @@ Default safe rules:
 ```
 
 **Why these permissions**:
+
 - `activeTab`: access only the active tab on user gesture
 - `scripting`: inject scripts on demand
 - `storage`: store settings + per-site permissions
@@ -151,6 +159,7 @@ Default safe rules:
 ### 4.2 Messaging bus
 
 Use a single schema for messages among:
+
 - sidebar UI ↔ background
 - background ↔ content script
 
@@ -159,10 +168,10 @@ Example envelope:
 ```ts
 type Msg = {
   id: string;
-  type: 'CAPTURE_PAGE'|'PLAN'|'EXECUTE'|'STATUS'|'ERROR';
+  type: "CAPTURE_PAGE" | "PLAN" | "EXECUTE" | "STATUS" | "ERROR";
   tabId?: number;
   payload?: any;
-}
+};
 ```
 
 ---
@@ -172,6 +181,7 @@ type Msg = {
 ### 5.1 Compact DOM snapshot
 
 Goals:
+
 - Keep under ~50–200 KB per request
 - Preserve semantics + stable identifiers
 - Include bounding boxes for grounding
@@ -183,8 +193,12 @@ Suggested node schema:
   "id": 123,
   "tag": "button",
   "text": "Add to cart",
-  "attrs": {"role": "button", "aria-label": "Add to cart", "data-testid": "add"},
-  "bbox": {"x": 10, "y": 420, "width": 120, "height": 40},
+  "attrs": {
+    "role": "button",
+    "aria-label": "Add to cart",
+    "data-testid": "add"
+  },
+  "bbox": { "x": 10, "y": 420, "width": 120, "height": 40 },
   "path": "body > div:nth-of-type(2) > button"
 }
 ```
@@ -192,6 +206,7 @@ Suggested node schema:
 ### 5.2 Screenshot capture (optional)
 
 For vision mode:
+
 - only capture **visible viewport** (not full page) by default
 - require user toggle per-site
 - crop to specific element for “verify” steps if needed
@@ -207,7 +222,7 @@ For vision mode:
     {
       "action": "click|input|scroll|extract|navigate",
       "selector": "CSS or XPath",
-      "expect": {"textIncludes": "Shipping", "role": "button"},
+      "expect": { "textIncludes": "Shipping", "role": "button" },
       "waitFor": "domStable|networkIdle|urlChange",
       "timeoutMs": 8000,
       "confidence": 0.0,
@@ -218,6 +233,7 @@ For vision mode:
 ```
 
 Execution rules:
+
 - only auto-execute `risk=low` by default (or never auto-execute; MVP: confirm always)
 - reject if any step has confidence < 0.6 (configurable)
 
@@ -228,7 +244,10 @@ Execution rules:
 ### 7.1 Safe click simulation (snippet)
 
 ```js
-export async function safeClick(selector, { expectText, timeoutMs = 8000 } = {}) {
+export async function safeClick(
+  selector,
+  { expectText, timeoutMs = 8000 } = {},
+) {
   const el = document.querySelector(selector);
   if (!el) throw new Error(`Element not found: ${selector}`);
 
@@ -236,13 +255,13 @@ export async function safeClick(selector, { expectText, timeoutMs = 8000 } = {})
     throw new Error(`Verification failed: missing text ${expectText}`);
   }
 
-  el.scrollIntoView({ block: 'center', behavior: 'instant' });
+  el.scrollIntoView({ block: "center", behavior: "instant" });
 
   // Dispatch sequence (often more reliable than el.click())
-  el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-  el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-  el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
   // Wait for stabilization
   await waitForDomStable(timeoutMs);
@@ -257,7 +276,11 @@ export function waitForDomStable(timeoutMs = 2000, quietWindowMs = 250) {
       lastMut = Date.now();
     });
 
-    obs.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+    obs.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+    });
 
     const tick = () => {
       if (done) return;
@@ -290,24 +313,26 @@ export async function safeType(selector, value) {
   if (!el) throw new Error(`Input not found: ${selector}`);
 
   const tag = el.tagName.toLowerCase();
-  if (tag !== 'input' && tag !== 'textarea') throw new Error('Not a text input');
+  if (tag !== "input" && tag !== "textarea")
+    throw new Error("Not a text input");
 
   el.focus();
-  el.value = '';
-  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.value = "";
+  el.dispatchEvent(new Event("input", { bubbles: true }));
 
   for (const ch of value) {
     el.value += ch;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    await new Promise(r => setTimeout(r, 20));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
   }
-  el.dispatchEvent(new Event('change', { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 ```
 
 ### 7.3 Waiting for SPA navigation
 
 Heuristics:
+
 - detect `location.href` changes
 - track history API calls (patch pushState/replaceState)
 - wait for DOM stability window
@@ -322,13 +347,14 @@ Heuristics:
 `POST /v1/plan`
 
 Request:
+
 ```json
 {
   "goal": "Find shipping options and show cheapest",
   "page": {
     "url": "https://example.com/product",
     "title": "Product",
-    "dom": {"nodes": []},
+    "dom": { "nodes": [] },
     "screenshot": null
   },
   "constraints": ["No purchases", "No form submit"],
@@ -337,25 +363,28 @@ Request:
 ```
 
 Response:
+
 ```json
 {
   "answer": "Shipping options are...",
-  "plan": {"explanation": "...", "actions": []},
+  "plan": { "explanation": "...", "actions": [] },
   "confidence": 0.82,
   "risks": ["Selector might vary"],
-  "telemetry": {"promptTokens": 0, "completionTokens": 0}
+  "telemetry": { "promptTokens": 0, "completionTokens": 0 }
 }
 ```
 
 ### 8.2 Prompt template (planning)
 
 System:
+
 - output must be valid JSON
 - prefer semantic selectors
 - include verification (expect text/role)
 - never propose payment/auth destructive actions
 
 User:
+
 - goal
 - compact DOM
 - screenshot (optional)
@@ -367,6 +396,7 @@ User:
 ### 9.1 Models to benchmark
 
 Minimum 3-way benchmark:
+
 - **Kimi K2.5** (multimodal agentic)
 - **Frontier cloud** (e.g., OpenAI GPT-4o / Anthropic equivalent)
 - **Open/local** (Llama 3.x Vision or similar)
@@ -390,11 +420,11 @@ Minimum 3-way benchmark:
 
 ### 10.1 MVP features
 
-1) Side panel UI: chat + current page URL/title
-2) DOM-only page Q&A (read-only)
-3) Suggested action plan preview (no auto-run)
-4) User-confirmed single-step click
-5) Basic safety policy + sensitive-field redaction
+1. Side panel UI: chat + current page URL/title
+2. DOM-only page Q&A (read-only)
+3. Suggested action plan preview (no auto-run)
+4. User-confirmed single-step click
+5. Basic safety policy + sensitive-field redaction
 
 ### 10.2 Permissions (MVP)
 
@@ -430,25 +460,30 @@ Minimum 3-way benchmark:
 ## 12) Safety & anti-abuse checklist
 
 **Consent & control**
+
 - Per-site opt-in
 - “Suggest mode” default
 - “Run” requires click
 - Emergency STOP
 
 **Action limits**
+
 - Block payments / checkout / account deletion
 - Block form submission by default
 - Require confirmation for cross-domain navigation
 
 **Rate limits**
+
 - Cap actions per minute and model calls per origin
 
 **Telemetry**
+
 - Off by default
 - Never logs DOM/screenshot raw
 - Only aggregated metrics unless user opts in
 
 **Policy compliance**
+
 - MV3 compliant
 - No remote code execution
 - Clear privacy policy
@@ -460,12 +495,14 @@ Minimum 3-way benchmark:
 ### MVP → Beta → Production
 
 **MVP (Weeks 1–4)**
+
 - Side panel + message bus
 - DOM compactor
 - Cloud planner integration
 - Preview + single-step click
 
 **Beta (Weeks 5–10)**
+
 - Multi-step execution
 - Robust waits/retries
 - Screenshot opt-in mode
@@ -473,6 +510,7 @@ Minimum 3-way benchmark:
 - Benchmarks + reliability harness
 
 **Production (Weeks 11–16)**
+
 - Security audit
 - CWS compliance & privacy policy
 - Fallback models + local-only mode option

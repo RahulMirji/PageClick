@@ -1,62 +1,59 @@
 {
-    "manifest_version": 3,
-    "name": "PageClick",
-    "version": "1.0.0",
-    "description": "AI-powered sidebar assistant that understands pages and suggests safe actions.",
-    "incognito": "spanning",
-    "permissions": [
-        "debugger",
-        "downloads",
-        "sidePanel",
-        "activeTab",
-        "tabs",
-        "storage",
-        "scripting",
-        "identity",
-        "notifications",
-        "tabGroups"
-    ],
-    "oauth2": {
-        "client_id": "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
-        "scopes": [
-            "openid",
-            "email",
-            "profile"
-        ]
-    },
-    "host_permissions": [
-        "https://hadfgdqrmxlhrykdwdvb.supabase.co/*",
-        "<all_urls>",
-        "file://*/*"
-    ],
-    "commands": {
-        "_execute_side_panel": {
-            "suggested_key": {
-                "default": "Ctrl+Shift+P",
-                "mac": "Command+Shift+P"
-            },
-            "description": "Open PageClick side panel"
-        }
-    },
-    "side_panel": {
-        "default_path": "sidebar.html"
-    },
-    "options_page": "options.html",
-    "background": {
-        "service_worker": "background.js",
-        "type": "module"
-    },
-    "action": {
-        "default_title": "Open PageClick",
-        "default_icon": {
-            "16": "icons/icon16.png",
-            "48": "icons/icon48.png",
-            "128": "icons/icon128.png"
-        }
-    },
-    "icons": {
-        "16": "icons/icon16.png",
-        "48": "icons/icon48.png",
-        "128": "icons/icon128.png"
+  "manifest_version": 3,
+  "name": "PageClick",
+  "version": "1.0.0",
+  "description": "AI-powered sidebar assistant that understands pages and suggests safe actions.",
+  "incognito": "spanning",
+  "permissions": [
+    "debugger",
+    "downloads",
+    "sidePanel",
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting",
+    "identity",
+    "notifications",
+    "tabGroups",
+    "nativeMessaging"
+  ],
+  "oauth2": {
+    "client_id": "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": ["openid", "email", "profile"]
+  },
+  "host_permissions": [
+    "https://hadfgdqrmxlhrykdwdvb.supabase.co/*",
+    "<all_urls>",
+    "file://*/*"
+  ],
+  "commands": {
+    "_execute_side_panel": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+P",
+        "mac": "Command+Shift+P"
+      },
+      "description": "Open PageClick side panel"
     }
+  },
+  "side_panel": {
+    "default_path": "sidebar.html"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open PageClick",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
 }

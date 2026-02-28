@@ -3,7 +3,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // --- Model Configurations ---
 
 /** Models using OpenAI-compatible chat/completions API */
-const OPENAI_COMPAT_MODELS: Record<string, { apiUrl: string; model: string; apiKeyEnv: string }> = {
+const OPENAI_COMPAT_MODELS: Record<
+  string,
+  { apiUrl: string; model: string; apiKeyEnv: string }
+> = {
   "kimi-k2.5": {
     apiUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
     model: "moonshotai/kimi-k2.5",
@@ -33,7 +36,8 @@ const DEFAULT_MODEL = "gemini-3-pro";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -53,12 +57,13 @@ function convertToGeminiFormat(messages: any[]): {
   for (const msg of messages) {
     // Extract system messages as systemInstruction
     if (msg.role === "system") {
-      const text = typeof msg.content === "string"
-        ? msg.content
-        : msg.content
-          .filter((p: any) => p.type === "text")
-          .map((p: any) => p.text)
-          .join("\n");
+      const text =
+        typeof msg.content === "string"
+          ? msg.content
+          : msg.content
+              .filter((p: any) => p.type === "text")
+              .map((p: any) => p.text)
+              .join("\n");
       systemInstruction = { parts: [{ text }] };
       continue;
     }
@@ -136,7 +141,9 @@ async function callGeminiStreaming(
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     if (attempt > 0) {
       const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 4000);
-      console.log(`Gemini retry ${attempt + 1}/${MAX_RETRIES} after ${delayMs}ms...`);
+      console.log(
+        `Gemini retry ${attempt + 1}/${MAX_RETRIES} after ${delayMs}ms...`,
+      );
       await new Promise((r) => setTimeout(r, delayMs));
     }
 
@@ -149,21 +156,28 @@ async function callGeminiStreaming(
 
       if (res.ok) {
         response = res;
-        if (attempt > 0) console.log(`Gemini succeeded on attempt ${attempt + 1}`);
+        if (attempt > 0)
+          console.log(`Gemini succeeded on attempt ${attempt + 1}`);
         break;
       }
 
       lastStatus = res.status;
       lastError = await res.text();
-      console.error(`Gemini API error (attempt ${attempt + 1}, status ${lastStatus}): ${lastError.substring(0, 500)}`);
+      console.error(
+        `Gemini API error (attempt ${attempt + 1}, status ${lastStatus}): ${lastError.substring(0, 500)}`,
+      );
     } catch (fetchErr: any) {
       lastError = fetchErr.message || String(fetchErr);
-      console.error(`Gemini fetch error (attempt ${attempt + 1}): ${lastError}`);
+      console.error(
+        `Gemini fetch error (attempt ${attempt + 1}): ${lastError}`,
+      );
     }
   }
 
   if (!response) {
-    throw new Error(`Gemini API failed after ${MAX_RETRIES} attempts (last status: ${lastStatus}): ${lastError.substring(0, 200)}`);
+    throw new Error(
+      `Gemini API failed after ${MAX_RETRIES} attempts (last status: ${lastStatus}): ${lastError.substring(0, 200)}`,
+    );
   }
 
   const reader = response.body!.getReader();
@@ -195,7 +209,10 @@ async function callGeminiStreaming(
 
             // Skip error-only chunks (e.g., transient Gemini errors mid-stream)
             if (geminiChunk?.error) {
-              console.error("Gemini SSE error chunk:", JSON.stringify(geminiChunk.error));
+              console.error(
+                "Gemini SSE error chunk:",
+                JSON.stringify(geminiChunk.error),
+              );
               continue;
             }
 
@@ -213,7 +230,7 @@ async function callGeminiStreaming(
                 ],
               };
               controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`)
+                encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`),
               );
             }
           } catch {
@@ -258,7 +275,7 @@ Deno.serve(async (req: Request) => {
           ...corsHeaders,
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
+          Connection: "keep-alive",
         },
       });
     }
@@ -272,7 +289,8 @@ Deno.serve(async (req: Request) => {
     // If modelKey fell through to default AND default is Gemini, handle it
     if (modelKey === GEMINI_CONFIG.id) {
       const apiKey = Deno.env.get(GEMINI_CONFIG.apiKeyEnv);
-      if (!apiKey) throw new Error(`${GEMINI_CONFIG.apiKeyEnv} is not configured`);
+      if (!apiKey)
+        throw new Error(`${GEMINI_CONFIG.apiKeyEnv} is not configured`);
       console.log(`Routing to Gemini (fallback) → ${GEMINI_CONFIG.model}`);
       const stream = await callGeminiStreaming(messages, apiKey);
       return new Response(stream, {
@@ -280,7 +298,7 @@ Deno.serve(async (req: Request) => {
           ...corsHeaders,
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
+          Connection: "keep-alive",
         },
       });
     }
@@ -291,7 +309,9 @@ Deno.serve(async (req: Request) => {
       throw new Error(`${config.apiKeyEnv} is not configured`);
     }
 
-    console.log(`Routing to ${modelKey} → ${config.model} via ${config.apiUrl}`);
+    console.log(
+      `Routing to ${modelKey} → ${config.model} via ${config.apiUrl}`,
+    );
 
     const response = await fetch(config.apiUrl, {
       method: "POST",
@@ -326,7 +346,7 @@ Deno.serve(async (req: Request) => {
         ...corsHeaders,
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
+        Connection: "keep-alive",
       },
     });
   } catch (error) {

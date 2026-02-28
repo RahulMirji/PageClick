@@ -16,13 +16,13 @@ AI-powered Chrome extension with a sleek sidebar UI. Ask questions, get instant 
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, TypeScript, Vite |
-| Styling | Vanilla CSS (Inter font, glassmorphism) |
-| Backend | Supabase Edge Functions (Deno) |
+| Layer     | Technology                                     |
+| --------- | ---------------------------------------------- |
+| Frontend  | React 18, TypeScript, Vite                     |
+| Styling   | Vanilla CSS (Inter font, glassmorphism)        |
+| Backend   | Supabase Edge Functions (Deno)                 |
 | AI Models | NVIDIA API (Kimi K2.5), Groq API (GPT-OSS-20B) |
-| Extension | Chrome Manifest V3, Side Panel API |
+| Extension | Chrome Manifest V3, Side Panel API             |
 
 ## Getting Started
 
