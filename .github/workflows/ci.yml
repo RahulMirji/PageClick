@@ -102,6 +102,8 @@ jobs:
       - lint
       - format
       - test
+      - coverage
+      - audit
 
     steps:
       - name: Checkout

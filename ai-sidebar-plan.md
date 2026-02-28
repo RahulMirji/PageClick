@@ -255,7 +255,7 @@ export async function safeClick(
     throw new Error(`Verification failed: missing text ${expectText}`);
   }
 
-  el.scrollIntoView({ block: "center", behavior: "instant" });
+  el.scrollIntoView({ block: "center" });
 
   // Dispatch sequence (often more reliable than el.click())
   el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
