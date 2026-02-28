@@ -75,14 +75,14 @@
 | 9   | ~~**Notification System**~~ ✅     | +3 pts | Low    | Done — `notifications` permission, background handler, visibility-gated alerts on task complete/fail                       |
 | 10  | ~~**Download Management**~~ ✅     | +3 pts | Medium | Done — `chrome.downloads` for AI-triggered file saves, per-message save button, per-conversation export button             |
 | 11  | ~~**Project/Context System**~~ ✅  | +5 pts | High   | Done — Supabase `projects` table, URL auto-matching, custom AI instructions per site, Projects tab with CRUD, Header badge |
-| 12  | ~~**Native Messaging**~~ ✅        | +3 pts | High   | Done — end-to-end native host routing + safety-policy constrained local ops                                                 |
+| 12  | ~~**Native Messaging**~~ ✅        | +3 pts | High   | Done — end-to-end native host routing + safety-policy constrained local ops                                                |
 | 13  | ~~**Tab Group Management**~~ ✅    | +2 pts | Medium | Done — `tabGroups` permission, AI-driven tab grouping via create/add/list ops, URL pattern matching                        |
 | 17  | ~~**Extension Popup**~~ ❌ Skipped | +1 pt  | Low    | Not needed — side panel serves as primary UI, awarded +1 pt for scope decision                                             |
 
 #### 🔵 Priority 4 — Polish & Production
 
-| #   | Feature            | Impact | Effort | Why?                                                                                           |
-| --- | ------------------ | ------ | ------ | ---------------------------------------------------------------------------------------------- |
+| #   | Feature                   | Impact | Effort | Why?                                                                                                                    |
+| --- | ------------------------- | ------ | ------ | ----------------------------------------------------------------------------------------------------------------------- |
 | 18  | ~~**Test Coverage**~~ ✅  | +2 pts | High   | Done — broad Vitest coverage for safety, prompts, orchestrator, stores, background/content routing, DOM component flows |
 | 19  | ~~**CI/CD Pipeline**~~ ✅ | +1 pt  | Medium | Done — GitHub Actions gates for lint/format/test/coverage/build/audit on PRs to `dev`                                   |
 
