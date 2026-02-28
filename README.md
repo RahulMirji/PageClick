@@ -35,7 +35,8 @@ AI-powered Chrome extension that can **see, understand, and interact** with any 
 
 PageClick uses a **3-layer architecture** with Chrome's message passing system:
 
-![Architecture Overview](docs/images/architecture-overview.png)
+<img width="1000" height="700" alt="image" src="https://github.com/user-attachments/assets/11630f82-0ab1-4ced-b50c-50abaa048c17" />
+
 
 ### Layer Breakdown
 
@@ -54,7 +55,8 @@ PageClick uses a **3-layer architecture** with Chrome's message passing system:
 
 ### Action Execution Flow
 
-![Message Flow](docs/images/message-flow.png)
+<img width="962" height="962" alt="image" src="https://github.com/user-attachments/assets/0fb1cdd6-baad-4efd-9ebd-fc7d7f85b5b5" />
+
 
 The agentic loop works as follows:
 
