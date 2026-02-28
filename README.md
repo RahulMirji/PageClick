@@ -72,24 +72,10 @@ PageClick/
 
 ## Architecture
 
-```
-User ──▶ SearchBox (model selector) ──▶ App.tsx
-                                          │
-                                    fetch POST /chat
-                                    { model, messages }
-                                          │
-                              Supabase Edge Function
-                                          │
-                        ┌─────────────────┼─────────────────┐
-                        ▼                                   ▼
-                  NVIDIA API                           Groq API
-               (Kimi K2.5)                         (GPT-OSS-20B)
-                        │                                   │
-                        └──────── SSE Stream ───────────────┘
-                                      │
-                                 ChatView.tsx
-                            (token-by-token render)
-```
+
+<img width="924" height="822" alt="image" src="https://github.com/user-attachments/assets/2d38a215-fcab-4cbf-bbb6-b3a39dc9804a" />
+
+
 
 ## License
 
