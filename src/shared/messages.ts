@@ -119,6 +119,53 @@ export interface TaskCompleteBlock {
   nextSteps: string[];
 }
 
+// --- Tool History Types (for native tool-calling conversation flow) ---
+
+/**
+ * Represents an assistant message that contains a tool call.
+ * Used to maintain proper conversation history for the model's
+ * agentic fine-tuning: User → Assistant(tool_call) → Tool(result) → Assistant
+ */
+export interface ToolCallEntry {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+/**
+ * A single tool history message — either the assistant's tool call
+ * or the tool's result. These are injected into the API message array
+ * but never displayed in the chat UI.
+ */
+export type ToolHistoryMessage =
+  | {
+    role: "assistant";
+    content: string | null;
+    tool_calls: ToolCallEntry[];
+  }
+  | {
+    role: "tool";
+    tool_call_id: string;
+    content: string;
+  };
+
+/**
+ * Gemini-format tool history messages.
+ * Gemini uses role: "model" + functionCall parts and role: "function" + functionResponse parts.
+ */
+export type GeminiToolHistoryMessage =
+  | {
+    role: "model";
+    parts: Array<{ text?: string; functionCall?: { name: string; args: Record<string, any> } }>;
+  }
+  | {
+    role: "function";
+    parts: Array<{ functionResponse: { name: string; response: Record<string, any> } }>;
+  };
+
 // --- Page Snapshot Types ---
 
 export interface DOMNode {

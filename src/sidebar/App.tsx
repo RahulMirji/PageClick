@@ -21,7 +21,7 @@ import type {
 } from "../shared/messages";
 import type { TaskProgress } from "./components/TaskProgressCard";
 import type { PlanConfirmData } from "./components/TaskPlanConfirm";
-import { TaskOrchestrator, type TaskState } from "./utils/taskOrchestrator";
+import { TaskOrchestrator } from "./utils/taskOrchestrator";
 import AuthGate from "./components/AuthGate";
 import {
   getUser,
@@ -44,12 +44,9 @@ import {
   buildExecutionPrompt,
   buildInfoPrompt,
   isTaskRequest,
-  parseAskUser,
-  parseTaskReady,
-  parseActionPlan,
-  parseCheckpoint,
-  parseTaskComplete,
 } from "./utils/agentPrompt";
+import { parseToolCallResponse, extractToolHistoryMessages } from "./utils/toolCallAdapter";
+import { PAGECLICK_TOOLS, CLARIFICATION_TOOLS, toGeminiTools } from "../shared/toolSchemas";
 import { trimToContextWindow, estimateTokens } from "./utils/tokenUtils";
 import { requestTaskNotification } from "./utils/notificationService";
 import { matchProject, type Project } from "./utils/projectStore";
@@ -71,6 +68,28 @@ function stripStructuredBlocks(text: string): string {
 function extractQuotedText(input: string): string | null {
   const match = input.match(/["']([^"']+)["']/);
   return match?.[1]?.trim() || null;
+}
+
+/** Turn raw API error strings into human-friendly messages. */
+function humanizeApiError(raw: string): string {
+  const lower = raw.toLowerCase();
+  if (lower.includes("rate limit") || lower.includes("tokens per minute") || lower.includes("requests per minute")) {
+    return "Rate limit reached — the AI provider is throttling requests. Please wait a minute and try again, or switch to a different model.";
+  }
+  if (lower.includes("context length") || lower.includes("maximum.*token") || lower.includes("too many tokens")) {
+    return "The conversation is too long for this model's context window. Try starting a new chat.";
+  }
+  if (lower.includes("invalid api key") || lower.includes("authentication")) {
+    return "Authentication error with the AI provider. Please check your configuration.";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return "The AI provider took too long to respond. Please try again.";
+  }
+  if (lower.includes("invalid json schema")) {
+    return "The AI provider rejected the tool schema. This model may not support structured tool calling.";
+  }
+  // Fallback: return the original but cap length
+  return raw.length > 200 ? raw.slice(0, 200) + "…" : raw;
 }
 
 function buildNativeStepFromGoal(goal: string): ActionStep | null {
@@ -137,7 +156,6 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelId>("gemini-3-pro");
-  const [taskState, setTaskState] = useState<TaskState | null>(null);
 
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -168,6 +186,8 @@ function App() {
   const stopScanRef = useRef<(() => void) | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<Message[]>([]);
+  /** Tool-call history (assistant+tool message pairs) for the current task — API-only, not shown in UI */
+  const toolHistoryRef = useRef<any[]>([]);
   const activeProjectRef = useRef<Project | null>(null);
 
   // Persistent progress tracking across all loop iterations
@@ -225,13 +245,6 @@ function App() {
     return unsub;
   }, []);
 
-  // Subscribe to orchestrator updates
-  useEffect(() => {
-    return orchestratorRef.current.subscribe(() => {
-      setTaskState({ ...orchestratorRef.current.getState() });
-    });
-  }, []);
-
   // Keep messagesRef always in sync with messages state
   useEffect(() => {
     messagesRef.current = messages;
@@ -251,12 +264,12 @@ function App() {
       content:
         m.role === "user" && m.images
           ? [
-              ...m.images.map((url) => ({
-                type: "image_url",
-                image_url: { url },
-              })),
-              { type: "text", text: m.content },
-            ]
+            ...m.images.map((url) => ({
+              type: "image_url",
+              image_url: { url },
+            })),
+            { type: "text", text: m.content },
+          ]
           : m.content,
     }));
 
@@ -275,12 +288,12 @@ function App() {
         role: "user",
         content: images
           ? [
-              ...images.map((url) => ({
-                type: "image_url",
-                image_url: { url },
-              })),
-              { type: "text", text: userMessage },
-            ]
+            ...images.map((url) => ({
+              type: "image_url",
+              image_url: { url },
+            })),
+            { type: "text", text: userMessage },
+          ]
           : userMessage,
       });
     }
@@ -318,13 +331,97 @@ function App() {
     return response;
   };
 
+  /**
+   * Calls the edge function in tool-call mode (non-streaming).
+   * Returns the raw provider JSON — caller passes to parseToolCallResponse().
+   */
+  const callToolTurn = async (
+    systemPrompt: string,
+    tools: any[],
+  ): Promise<any> => {
+    const t0 = performance.now();
+    const currentMessages = messagesRef.current;
+    console.log(`[Agent] callToolTurn: ${tools.length} tools, ${currentMessages.length} messages, ${toolHistoryRef.current.length} history entries, model=${selectedModel}`);
+
+    const rawMessages = currentMessages.map((m) => ({
+      role: m.role,
+      content:
+        m.role === "user" && m.images
+          ? [
+            ...m.images.map((url) => ({
+              type: "image_url",
+              image_url: { url },
+            })),
+            { type: "text", text: m.content },
+          ]
+          : m.content,
+    }));
+
+    const { trimmed, dropped } = trimToContextWindow(rawMessages);
+    if (dropped > 0) {
+      console.info(`[PageClick] Context trimmed: dropped ${dropped} oldest messages.`);
+    }
+
+    // Inject tool-call history (assistant+tool pairs) so the model remembers
+    // what it called and what happened — without this it "forgets" between turns.
+    const apiMessages = [
+      { role: "system", content: systemPrompt },
+      ...trimmed,
+      ...toolHistoryRef.current,
+    ];
+
+    // Build tool schema — Gemini needs functionDeclarations format, others use tools[]
+    const isGemini = selectedModel === "gemini-3-pro";
+    const toolPayload = isGemini ? toGeminiTools(tools) : tools;
+
+    console.log(`[Agent] callToolTurn: fetching edge function (${apiMessages.length} API messages)...`);
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages: apiMessages,
+        mode: "tool",
+        tools: toolPayload,
+      }),
+      signal: abortRef.current?.signal,
+    });
+    console.log(`[Agent] callToolTurn: response status=${response.status} in ${(performance.now() - t0).toFixed(0)}ms`);
+
+    if (!response.ok) {
+      let errorDetail = `API error: ${response.status}`;
+      try {
+        const errBody = await response.text();
+        const parsed = JSON.parse(errBody);
+        if (parsed.error)
+          errorDetail =
+            typeof parsed.error === "string"
+              ? parsed.error
+              : parsed.error.message || errorDetail;
+      } catch {
+        /* use default */
+      }
+      throw new Error(humanizeApiError(errorDetail));
+    }
+
+    const json = await response.json();
+    console.log(`[Agent] callToolTurn: total ${(performance.now() - t0).toFixed(0)}ms`);
+    return json;
+  };
+
   const capturePage = async (): Promise<PageSnapshot | null> => {
+    const t0 = performance.now();
     try {
       const response = await chrome.runtime.sendMessage({
         type: "CAPTURE_PAGE",
       });
       if (response?.type === "CAPTURE_PAGE_RESULT" && response.payload) {
         pageUrlRef.current = response.payload.url || "";
+        console.log(`[Agent] capturePage: ${response.payload.url} (${(performance.now() - t0).toFixed(0)}ms)`);
         // Auto-detect project context for this URL
         try {
           activeProjectRef.current = await matchProject(
@@ -338,15 +435,18 @@ function App() {
     } catch (e) {
       console.warn("Failed to capture page:", e);
     }
+    console.warn(`[Agent] capturePage: FAILED or empty (${(performance.now() - t0).toFixed(0)}ms)`);
     return null;
   };
 
   const waitForPageLoad = async () => {
-    console.log("[App] Waiting for page load...");
+    const t0 = performance.now();
+    console.log("[Agent] waitForPageLoad: waiting (timeout=8s)...");
     await chrome.runtime.sendMessage({
       type: "WAIT_FOR_PAGE_LOAD",
       timeoutMs: 8000,
     });
+    console.log(`[Agent] waitForPageLoad: done in ${(performance.now() - t0).toFixed(0)}ms`);
   };
 
   const handleStop = useCallback(() => {
@@ -463,12 +563,12 @@ function App() {
 
     // New request: decide if task or info
     const isTask = isTaskRequest(text);
+    console.log(`[Agent] handleSend: "${text.slice(0, 80)}" → isTask=${isTask}`);
 
     if (isTask) {
       resetProgressTracking();
       orchestratorRef.current.startTask(text);
-      // Attach CDP debugger for runtime context (detached in runAgentLoop finally)
-      chrome.runtime.sendMessage({ type: "ATTACH_DEBUGGER" }).catch(() => {});
+      console.log("[Agent] Starting agent loop...");
       await runAgentLoop(convId);
     } else {
       // Info request — one-shot answer
@@ -501,13 +601,16 @@ function App() {
 
   const runAgentLoop = async (convId: string) => {
     const orchestrator = orchestratorRef.current;
+    toolHistoryRef.current = []; // Reset tool history for new task
     stopScanRef.current = await triggerPageScan();
 
     try {
       // Loop while active
       let retried = false; // Track if we already retried with no-plan fallback
       while (orchestrator.isActive()) {
+        const loopT0 = performance.now();
         const state = orchestrator.getState();
+        console.log(`[Agent] ── Loop iteration ${state.loopCount} | phase=${state.phase} | goal="${state.goal.slice(0, 60)}"`);
         const snapshot = await capturePage();
 
         // Poll CDP runtime context (network log, console, JS errors)
@@ -515,6 +618,7 @@ function App() {
           .sendMessage({ type: "GET_CDP_SNAPSHOT" })
           .catch(() => null);
         const cdpSnapshot = cdpRes?.snapshot ?? null;
+        console.log(`[Agent] CDP snapshot: ${cdpSnapshot ? 'received' : 'null'} (${(performance.now() - loopT0).toFixed(0)}ms elapsed)`);
 
         // Deterministic fast-path for native-intent tasks.
         // This prevents model drift into eval/navigate loops for clipboard/file requests.
@@ -606,148 +710,127 @@ function App() {
           break; // Should not happen
         }
 
-        // Call model
-        const response = await callModel(prompt);
-        const isTaskExec =
-          state.phase === "executing" || state.phase === "observing";
-        const fullText = await streamResponse(response, convId, isTaskExec); // hide text during task execution
-
-        // Parse response based on phase
+        // ── Clarification phase — use CLARIFICATION_TOOLS ───────────
         if (state.phase === "clarifying") {
-          // Check for TASK_READY first (the preferred response)
-          const taskReady = parseTaskReady(fullText);
-          if (taskReady.found && taskReady.block) {
-            // Show plan with Proceed/Reject buttons
-            // Find the current last assistant message index
-            const currentMsgCount = await new Promise<number>((resolve) => {
+          console.log(`[Agent] Clarification phase: calling tool turn...`);
+          const rawResponse = await callToolTurn(prompt, CLARIFICATION_TOOLS);
+          const parsed = parseToolCallResponse(selectedModel, rawResponse);
+          console.log(`[Agent] Clarification response: type=${parsed.type}`);
+
+          if (parsed.type === "task_ready") {
+            console.log(`[Agent] task_ready: showing plan — "${parsed.summary.slice(0, 80)}" — waiting for user approval...`);
+            // Insert a new assistant message to host the plan confirmation card
+            const planMsgIndex = await new Promise<number>((resolve) => {
               setMessages((prev) => {
-                resolve(prev.length - 1); // Index of last message
-                return prev;
+                const next = [...prev, { role: "assistant" as const, content: "" }];
+                messagesRef.current = next;
+                resolve(next.length - 1); // index of the new assistant message
+                return next;
               });
             });
 
-            // Wait for user to proceed or reject
             const approved = await new Promise<boolean>((resolve) => {
               const planConfirm: PlanConfirmData = {
-                summary: taskReady.block!.summary,
+                summary: parsed.summary,
                 status: "pending",
                 onProceed: () => {
-                  // Update status to approved
-                  updatePlanConfirm(currentMsgCount, {
-                    ...planConfirm,
-                    status: "approved",
-                  });
+                  updatePlanConfirm(planMsgIndex, { ...planConfirm, status: "approved" });
                   resolve(true);
                 },
                 onReject: () => {
-                  // Update status to rejected
-                  updatePlanConfirm(currentMsgCount, {
-                    ...planConfirm,
-                    status: "rejected",
-                  });
+                  updatePlanConfirm(planMsgIndex, { ...planConfirm, status: "rejected" });
                   resolve(false);
                 },
               };
-              updatePlanConfirm(currentMsgCount, planConfirm);
+              updatePlanConfirm(planMsgIndex, planConfirm);
             });
 
-            setIsLoading(true); // Re-enable loading state
+            setIsLoading(true);
+            console.log(`[Agent] Plan ${approved ? 'APPROVED' : 'REJECTED'} by user`);
 
-            // Save plan confirm card to history
             const planStatus = approved ? "approved" : "rejected";
             const planMsg: Message = {
               role: "assistant",
               content: "",
               planConfirm: {
-                summary: taskReady.block!.summary,
+                summary: parsed.summary,
                 status: planStatus as "approved" | "rejected",
-                onProceed: () => {},
-                onReject: () => {},
+                onProceed: () => { },
+                onReject: () => { },
               },
             };
-            saveMessage(
-              convId,
-              "assistant",
-              encodeMessageContent(planMsg),
-            ).catch(console.warn);
+            saveMessage(convId, "assistant", encodeMessageContent(planMsg)).catch(console.warn);
 
             if (approved) {
-              // Set up the progress message — reuse the same message
-              progressMsgIndexRef.current = currentMsgCount;
+              progressMsgIndexRef.current = planMsgIndex;
               orchestrator.beginExecution();
-              continue; // Continue to execution phase
+              continue;
             } else {
               orchestrator.abort("Cancelled by user");
-              const cancelMsg =
-                "Task cancelled. Let me know if you need anything else!";
-              setMessages((prev) => [
-                ...prev,
-                { role: "assistant", content: cancelMsg },
-              ]);
+              const cancelMsg = "Task cancelled. Let me know if you need anything else!";
+              setMessages((prev) => [...prev, { role: "assistant", content: cancelMsg }]);
               saveMessage(convId, "assistant", cancelMsg).catch(console.warn);
               break;
             }
           }
 
-          const askUser = parseAskUser(fullText);
-          if (askUser.found && askUser.block) {
-            // AI asked questions (rare) — wait for user input
+          if (parsed.type === "ask_user") {
+            // Show questions as assistant message and wait
+            const questionText = parsed.block.questions.join("\n");
+            setMessages((prev) => [...prev, { role: "assistant", content: questionText }]);
             setIsLoading(false);
             return;
           }
 
-          // Fallback: if AI didn't output structured block, treat as question
+          // Fallback — treat as question
           setIsLoading(false);
           return;
         }
 
+        // ── Execution/observing phase — use PAGECLICK_TOOLS ─────────
         if (state.phase === "executing" || state.phase === "observing") {
-          // Check for checkpoint
-          const checkpoint = parseCheckpoint(fullText);
-          if (checkpoint.found && checkpoint.block) {
-            orchestrator.checkpoint(checkpoint.block);
-            // Show checkpoint dialog
+          console.log(`[Agent] Execution phase (${state.phase}): calling tool turn...`);
+          const rawResponse = await callToolTurn(prompt, PAGECLICK_TOOLS);
+          const parsed = parseToolCallResponse(selectedModel, rawResponse);
+          console.log(`[Agent] Execution response: type=${parsed.type}${parsed.type === 'action' ? `, actions=[${parsed.plan.actions.map((a: any) => a.action).join(',')}]` : ''}${parsed.type === 'error' ? `, error=${(parsed as any).message?.slice(0, 100)}` : ''}`);
+
+          if (parsed.type === "checkpoint") {
+            // Record checkpoint tool call in history
+            const historyMsgs = extractToolHistoryMessages(selectedModel, rawResponse, { success: true });
+            toolHistoryRef.current.push(...historyMsgs);
+
+            orchestrator.checkpoint(parsed.block);
             const approved = await new Promise<boolean>((resolve) => {
-              setPendingCheckpoint({ block: checkpoint.block!, resolve });
+              setPendingCheckpoint({ block: parsed.block, resolve });
             });
             setPendingCheckpoint(null);
-
             if (approved) {
               orchestrator.resumeFromCheckpoint();
-              continue; // Continue loop
+              continue;
             } else {
               orchestrator.abort("Stopped at checkpoint");
               break;
             }
           }
 
-          // Check for completion
-          const complete = parseTaskComplete(fullText);
-          if (complete.found && complete.block) {
-            orchestrator.complete(complete.block);
-            // Add completion summary as a NEW visible message at the end
-            const summary = complete.block!.summary;
-            setMessages((prev) => [
-              ...prev,
-              { role: "assistant", content: summary },
-            ]);
+          if (parsed.type === "complete") {
+            // Record complete tool call in history
+            const historyMsgs = extractToolHistoryMessages(selectedModel, rawResponse, { success: true });
+            toolHistoryRef.current.push(...historyMsgs);
+
+            orchestrator.complete(parsed.block);
+            const summary = parsed.block.summary;
+            setMessages((prev) => [...prev, { role: "assistant", content: summary }]);
             saveMessage(convId, "assistant", summary).catch(console.warn);
-            // Notify user if they've switched away from the panel
             requestTaskNotification("✅ Task Complete", summary.slice(0, 100));
             break;
           }
 
-          // Check for action plan
-          const plan = parseActionPlan(fullText);
-          if (plan.found && plan.block) {
-            orchestrator.setPlan({
-              explanation: plan.block.explanation,
-              actions: plan.block.actions,
-            });
+          if (parsed.type === "action") {
+            const plan = parsed.plan;
+            orchestrator.setPlan(plan);
 
-            // If this is the first action plan, set the progress message
             if (progressMsgIndexRef.current < 0) {
-              // Find current last assistant message index
               const idx = await new Promise<number>((resolve) => {
                 setMessages((prev) => {
                   resolve(prev.length - 1);
@@ -755,18 +838,13 @@ function App() {
                 });
               });
               progressMsgIndexRef.current = idx;
-              accumulatedProgressRef.current = {
-                explanation: plan.block.explanation,
-                steps: [],
-              };
+              accumulatedProgressRef.current = { explanation: plan.explanation, steps: [] };
             }
 
-            // Update explanation if it's better/newer
-            accumulatedProgressRef.current.explanation = plan.block.explanation;
+            accumulatedProgressRef.current.explanation = plan.explanation;
 
-            // Append new steps as pending
             const newStepsStart = accumulatedProgressRef.current.steps.length;
-            for (const a of plan.block.actions) {
+            for (const a of plan.actions) {
               accumulatedProgressRef.current.steps.push({
                 description: a.description || `${a.action} on element`,
                 status: "pending",
@@ -774,62 +852,64 @@ function App() {
             }
             updateProgress(accumulatedProgressRef.current);
 
-            // Execute steps with live progress updates
             const results = [];
-            for (let si = 0; si < plan.block.actions.length; si++) {
-              const step = plan.block.actions[si];
+            for (let si = 0; si < plan.actions.length; si++) {
+              const step = plan.actions[si];
               const globalIndex = newStepsStart + si;
-
-              // Mark current step as running
-              accumulatedProgressRef.current.steps[globalIndex].status =
-                "running";
+              accumulatedProgressRef.current.steps[globalIndex].status = "running";
               updateProgress(accumulatedProgressRef.current);
 
+              const stepT0 = performance.now();
+              console.log(`[Agent] Executing step ${si + 1}/${plan.actions.length}: ${step.action} selector="${step.selector?.slice(0, 40) || ''}" value="${step.value?.slice(0, 40) || ''}"`);
               const result = await executeStep(step);
+              console.log(`[Agent] Step ${si + 1} result: success=${result.success}${result.error ? ` error="${result.error}"` : ''} (${(performance.now() - stepT0).toFixed(0)}ms)`);
               orchestrator.recordStepResult(result);
               results.push(result);
 
-              // Mark step as completed or failed
-              accumulatedProgressRef.current.steps[globalIndex].status =
-                result.success ? "completed" : "failed";
+              accumulatedProgressRef.current.steps[globalIndex].status = result.success ? "completed" : "failed";
               updateProgress(accumulatedProgressRef.current);
 
-              if (!result.success) break; // Stop on failure
+              if (!result.success) break;
 
-              // If navigation occurred, wait for load and re-inject animation
               if (step.action === "navigate") {
+                console.log(`[Agent] Navigate detected — waiting for page load...`);
                 await waitForPageLoad();
-                // Re-inject animation on the new page
+                console.log(`[Agent] Page loaded — re-triggering scan`);
                 stopScanRef.current?.();
                 stopScanRef.current = await triggerPageScan();
               }
             }
 
-            // Complete loop iteration
+            // Record the tool call + execution result in history so the model
+            // sees what it did and what happened on subsequent turns.
+            const lastResult = results[results.length - 1];
+            const historyMsgs = extractToolHistoryMessages(
+              selectedModel,
+              rawResponse,
+              lastResult || { success: false, error: "No actions executed" },
+            );
+            toolHistoryRef.current.push(...historyMsgs);
+
             const cont = orchestrator.completeLoop({
               iteration: state.loopCount + 1,
               pageUrl: pageUrlRef.current,
-              plan: {
-                explanation: plan.block.explanation,
-                actions: plan.block.actions,
-              },
+              plan,
               results,
               timestamp: Date.now(),
             });
+            console.log(`[Agent] Loop iteration ${state.loopCount + 1} complete in ${(performance.now() - loopT0).toFixed(0)}ms — continue=${cont}`);
+            if (!cont) break;
 
-            if (!cont) break; // Budget exhausted
           } else {
-            // No plan found — retry once with stronger instruction
+            // error / unknown — retry once
             if (!retried) {
               retried = true;
-              console.warn(
-                "No action plan found, retrying with stronger instruction...",
-              );
+              console.warn("[Tool calling] Unexpected result, retrying:", parsed);
               continue; // One more loop iteration
             }
             // Still no plan after retry
-            console.warn("No action plan found after retry");
-            orchestrator.abort("No plan generated");
+            console.warn("[Tool calling] No valid action after retry:", parsed);
+            orchestrator.abort("No valid action generated");
             const noplanMsg =
               "I wasn't able to generate the right actions. Could you try rephrasing your request?";
             setMessages((prev) => [
@@ -840,24 +920,37 @@ function App() {
             break;
           }
         }
-      }
+      } // end while(orchestrator.isActive())
+      console.log(`[Agent] Agent loop exited normally. Final state: phase=${orchestrator.getState().phase}, loopCount=${orchestrator.getState().loopCount}`);
     } catch (err: any) {
-      if (err.name === "AbortError") return; // User stopped
-      console.error("Agent loop error:", err);
-      orchestrator.abort(err.message);
-      const errMsg = `Task error: ${err.message}`;
-      setMessages((prev) => [...prev, { role: "assistant", content: errMsg }]);
-      saveMessage(convId, "assistant", errMsg).catch(console.warn);
-      // Notify user of failure if they've switched away
-      requestTaskNotification(
-        "❌ Task Failed",
-        err.message || "Something went wrong.",
-      );
+      if (err.name === "AbortError") { console.log("[Agent] Aborted by user"); return; }
+      console.error("[Agent] Agent loop error:", err);
+
+      // Check if the task actually completed its steps before the error hit
+      const state = orchestrator.getState();
+      const allStepsDone = accumulatedProgressRef.current.steps.length > 0 &&
+        accumulatedProgressRef.current.steps.every((s) => s.status === "completed");
+
+      if (allStepsDone && state.loopCount > 0) {
+        // Task finished its work — the error was on a follow-up loop iteration
+        orchestrator.complete({ summary: "All steps completed successfully.", nextSteps: [] });
+        const doneMsg = "✅ All steps completed! (The agent ran into a limit while wrapping up, but your task is done.)";
+        setMessages((prev) => [...prev, { role: "assistant", content: doneMsg }]);
+        saveMessage(convId, "assistant", doneMsg).catch(console.warn);
+        requestTaskNotification("✅ Task Complete", "All steps finished successfully.");
+      } else {
+        orchestrator.abort(err.message);
+        const errMsg = `Task error: ${err.message}`;
+        setMessages((prev) => [...prev, { role: "assistant", content: errMsg }]);
+        saveMessage(convId, "assistant", errMsg).catch(console.warn);
+        requestTaskNotification(
+          "❌ Task Failed",
+          err.message || "Something went wrong.",
+        );
+      }
     } finally {
       setIsLoading(false);
       stopScanRef.current?.();
-      // Detach CDP debugger — removes the yellow banner from the tab
-      chrome.runtime.sendMessage({ type: "DETACH_DEBUGGER" }).catch(() => {});
 
       // Save final progress card to history if we have one
       if (accumulatedProgressRef.current.steps.length > 0) {
@@ -941,10 +1034,14 @@ function App() {
     try {
       // Handle 'eval' action — runs a JS expression via CDP Runtime
       if (step.action === "eval") {
+        // Lazy-attach CDP debugger only when needed (avoids the yellow banner for non-eval tasks)
+        await chrome.runtime.sendMessage({ type: "ATTACH_DEBUGGER" }).catch(() => { });
         const evalRes = await chrome.runtime.sendMessage({
           type: "EVAL_JS",
           expression: step.value || step.selector,
         });
+        // Detach immediately after eval to remove the banner
+        chrome.runtime.sendMessage({ type: "DETACH_DEBUGGER" }).catch(() => { });
         const result = {
           success: !evalRes?.error,
           action: "eval",
@@ -1099,10 +1196,12 @@ function App() {
         await logOutcome(result);
         return result;
       }
+      console.log(`[Agent] executeStep: sending EXECUTE_ACTION to background for ${step.action}`);
       const res = await chrome.runtime.sendMessage({
         type: "EXECUTE_ACTION",
         step,
       });
+      console.log(`[Agent] executeStep: EXECUTE_ACTION response:`, res?.result?.success, res?.result?.error || '');
       await logOutcome(res.result);
       return res.result;
     } catch (e: any) {
@@ -1198,7 +1297,6 @@ function App() {
   return (
     <div className="app">
       <Header
-        status={taskState?.statusMessage}
         user={user}
         onSignOut={handleSignOut}
         activeProject={activeProjectRef.current}

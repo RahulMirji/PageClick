@@ -165,19 +165,9 @@ IMPORTANT RULES:
 - Be action-oriented: describe WHAT you will do, not what you need to know.
 - Keep it to 1-2 sentences max.
 
-ONLY ask questions (via ASK_USER) if the task is genuinely IMPOSSIBLE without user input — for example, "Buy me a laptop" with no indication of which website, budget, or specs. Even then, keep questions to 2-3 max.
+ONLY ask questions (via the ask_user tool) if the task is genuinely IMPOSSIBLE without user input — for example, "Buy me a laptop" with no indication of which website, budget, or specs. Even then, keep questions to 2-3 max.
 
-RESPONSE FORMAT — always prefer TASK_READY:
-
-<<<TASK_READY>>>
-{"ready":true,"summary":"I'll navigate to Gmail and search for your Chrome Web Store submission email."}
-<<<END_TASK_READY>>>
-
-Only if truly stuck:
-
-<<<ASK_USER>>>
-{"questions":["What's your budget range?","Any brand preference?"]}
-<<<END_ASK_USER>>>
+RESPONSE: Call the task_ready tool with your 1-2 sentence plan. Only call ask_user if the task is truly ambiguous.
 `;
 }
 
@@ -213,59 +203,28 @@ ${FORMATTING_RULES}
 
 INSTRUCTIONS:
 1. Look at the current page state and your previous actions.
-2. Determine the SINGLE BEST next action to take toward the goal.
-3. Generate EXACTLY ONE action step (not multiple). After this action executes, you'll get a fresh page snapshot to decide the next step.
-4. Use CSS selectors from the Interactive Elements list above for grounding.
-5. If the page hasn't loaded the expected content, use scroll or wait.
-6. If you need to navigate to a new page, use the "navigate" action.
+2. Think step-by-step: write a brief 1-sentence reasoning in your response text BEFORE calling any tool. This helps you plan better. For example: "The search box is visible at #search-input, I'll type the query there."
+3. Determine the SINGLE BEST next action to take toward the goal.
+4. Call EXACTLY ONE tool. After this action executes, you'll get a fresh page snapshot to decide the next step.
+5. Use CSS selectors from the Interactive Elements list above when selecting elements.
+6. If the page hasn't loaded expected content, use scroll.
+7. If you need to navigate to a new page, use the navigate tool.
 
-RESPONSE FORMAT — pick ONE of these:
-
-**Option A: Execute an action**
-Your brief explanation of what you're doing and why.
-
-<<<ACTION_PLAN>>>
-{"explanation":"what this step does","actions":[{"action":"click|input|scroll|extract|navigate|eval|download|tabgroup|native","selector":"CSS selector, JS expression for eval, CSS selector/URL for download, or empty for tabgroup/native","value":"optional value (for eval: JS expression; for download: direct URL; for navigate: target URL; for tabgroup/native: JSON operation object)","confidence":0.95,"risk":"low|medium|high","description":"human readable step description"}]}
-<<<END_ACTION_PLAN>>>
-
-**Option B: Task checkpoint (payment, account creation, etc.)**
-<<<CHECKPOINT>>>
-{"reason":"About to enter payment flow","message":"I've added the item to your cart and reached checkout. Would you like me to continue?","canSkip":false}
-<<<END_CHECKPOINT>>>
-
-**Option C: Task complete**
-<<<TASK_COMPLETE>>>
-{"summary":"What was accomplished","nextSteps":["Step 1 for user","Step 2 for user"]}
-<<<END_TASK_COMPLETE>>>
-
-**Option D: Stuck or can't proceed**
-<<<TASK_COMPLETE>>>
-{"summary":"I was unable to complete the task because [reason]","nextSteps":["Suggestion for user"]}
-<<<END_TASK_COMPLETE>>>
-
-CRITICAL RULES:
-- Generate ONLY ONE action at a time.
-- For input actions, make sure the selector targets an actual input/textarea element.
-- For navigate, put the full URL in "value".
-- For eval, put the JS expression in "value" (selector can be empty). Result is returned as extractedData.
+RULES:
+- ALWAYS write your brief reasoning as text content BEFORE the tool call. This is critical for accurate action selection.
+- Call ONLY ONE tool per turn — never chain multiple actions.
+- For input: selector must target an actual input/textarea element.
+- For navigate: put the full URL in the value parameter.
+- For eval: put the JS expression in value (selector can be empty).
 - NEVER interact with password fields, credit card fields, or payment forms.
-- If you see a checkout/payment page, emit a CHECKPOINT instead of an action.
-- If you've achieved the goal or can't make progress, emit TASK_COMPLETE.
-- Use "extract" to read visible DOM text; use "eval" to query JS state (e.g. input values, framework state).
-- Use "download" to save a file: set "selector" to a CSS selector for a link/image, or put the full URL in "value". NEVER download payment receipts or personal data.
-- Use "tabgroup" to organize browser tabs into groups. Set "selector" to "" and put a JSON object in "value" with one of these operations:
-  - Create group: {"op":"create","title":"Research","color":"blue","urls":["*github.com*","*stackoverflow.com*"]}
-  - Add to group: {"op":"add","title":"Research","urls":["*docs.google.com*"]}
-  - List groups: {"op":"list"}
-  Valid colors: grey, blue, red, yellow, green, pink, purple, cyan, orange.
-  URL patterns use * as wildcards and match against both tab URL and title.
-- Use "native" for local-tool actions. Set "selector" to "" and set "value" to JSON:
-  {"op":"clipboard.read","args":{}}
-  {"op":"clipboard.write","args":{"text":"Hello"}}
-  {"op":"fs.readText","args":{"path":"~/Documents/notes.txt"}}
-  Only use these 3 native ops. Never request passwords, payment data, API keys, or auth tokens.
-- For clipboard requests, DO NOT use eval/document.execCommand/navigator.clipboard scripts. Always use the native action.
-- If RUNTIME CONTEXT shows JS errors or network failures, factor them into your next action decision.
+- If you see a checkout/payment page, call the checkpoint tool.
+- If you've achieved the goal or cannot make further progress, call task_complete.
+- Use extract to read visible DOM text; use eval to query JS/framework state.
+- Use download to save files — pass a CSS selector for a link/image, or a direct URL in value.
+- Use tabgroup to organize browser tabs — pass a JSON operation in value.
+- Use native for clipboard/file operations — pass a JSON operation in value.
+- For clipboard: always use the native tool, never navigator.clipboard or execCommand.
+- Factor in RUNTIME CONTEXT (JS errors, network failures) when choosing your next action.
 `;
 }
 
@@ -315,8 +274,11 @@ export function isTaskRequest(message: string): boolean {
   return TASK_PATTERNS.some((pattern) => pattern.test(message));
 }
 
-// ── Response block parsers ───────────────────────────────────────
+// ── Response block parsers are intentionally removed.
+// All response parsing is now handled by toolCallAdapter.ts
+// which reads structured tool_calls from the model API response directly.
 
+/** @deprecated Use toolCallAdapter.parseToolCallResponse() instead. Kept for backward compatibility during migration. */
 export function parseAskUser(response: string): {
   found: boolean;
   block?: { questions: string[] };
