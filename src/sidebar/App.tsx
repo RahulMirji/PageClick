@@ -898,10 +898,53 @@ function App() {
               timestamp: Date.now(),
             });
             console.log(`[Agent] Loop iteration ${state.loopCount + 1} complete in ${(performance.now() - loopT0).toFixed(0)}ms — continue=${cont}`);
+            retried = false; // Reset retry flag after successful action
             if (!cont) break;
 
           } else {
-            // error / unknown — retry once
+            // error / unknown — try to salvage a navigate action from text response
+            const errorText = (parsed as any).error || "";
+            const urlMatch = errorText.match(/https?:\/\/[^\s"')]+/);
+            if (urlMatch) {
+              console.log(`[Agent] Salvaged URL from text-only response: ${urlMatch[0]}`);
+              const salvagedPlan = {
+                explanation: `Navigating to ${urlMatch[0]}`,
+                actions: [{
+                  action: "navigate" as any,
+                  selector: "",
+                  value: urlMatch[0],
+                  confidence: 0.85,
+                  risk: "low" as any,
+                  description: `Navigate to ${urlMatch[0]}`,
+                }],
+              };
+              // Feed it back through the action execution path
+              orchestrator.setPlan(salvagedPlan);
+              if (progressMsgIndexRef.current < 0) {
+                const idx = await new Promise<number>((resolve) => {
+                  setMessages((prev) => { resolve(prev.length - 1); return prev; });
+                });
+                progressMsgIndexRef.current = idx;
+                accumulatedProgressRef.current = { explanation: salvagedPlan.explanation, steps: [] };
+              }
+              accumulatedProgressRef.current.steps.push({ description: salvagedPlan.actions[0].description || "Navigate", status: "running" });
+              updateProgress(accumulatedProgressRef.current);
+              const navResult = await executeStep(salvagedPlan.actions[0]);
+              orchestrator.recordStepResult(navResult);
+              const lastIdx = accumulatedProgressRef.current.steps.length - 1;
+              accumulatedProgressRef.current.steps[lastIdx].status = navResult.success ? "completed" : "failed";
+              updateProgress(accumulatedProgressRef.current);
+              if (navResult.success) {
+                await waitForPageLoad();
+                stopScanRef.current?.();
+                stopScanRef.current = await triggerPageScan();
+                orchestrator.completeLoop({ iteration: state.loopCount + 1, pageUrl: pageUrlRef.current, plan: salvagedPlan, results: [navResult], timestamp: Date.now() });
+                retried = false;
+                continue;
+              }
+            }
+
+            // Retry once normally
             if (!retried) {
               retried = true;
               console.warn("[Tool calling] Unexpected result, retrying:", parsed);

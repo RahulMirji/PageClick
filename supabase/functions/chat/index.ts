@@ -68,6 +68,29 @@ function convertToGeminiFormat(messages: any[]): {
       continue;
     }
 
+    // Pass through Gemini-native tool history messages unchanged.
+    // These have role="model" with functionCall parts, or role="function"
+    // with functionResponse parts — produced by extractGeminiToolHistory().
+    if (
+      (msg.role === "model" || msg.role === "function") &&
+      Array.isArray(msg.parts)
+    ) {
+      contents.push({ role: msg.role, parts: msg.parts });
+      continue;
+    }
+
+    // Skip OpenAI-format tool messages (role="tool") — these are for
+    // OpenAI-compatible providers only and would confuse Gemini.
+    if (msg.role === "tool") {
+      continue;
+    }
+
+    // Skip OpenAI-format assistant messages that carry tool_calls arrays.
+    // These are from extractOpenAIToolHistory() and would confuse Gemini.
+    if (msg.role === "assistant" && Array.isArray(msg.tool_calls)) {
+      continue;
+    }
+
     // Map role: assistant → model
     const role = msg.role === "assistant" ? "model" : "user";
 
@@ -265,12 +288,12 @@ async function callGeminiToolCall(
     tools: [tools], // tools = { functionDeclarations: [...] }
     toolConfig: {
       functionCallingConfig: {
-        mode: "AUTO", // Model decides when to call a function
+        mode: "ANY", // MUST call a function — prevents text-only fallback
       },
     },
     generationConfig: {
       temperature: 0.1, // Low temp for deterministic action selection
-      maxOutputTokens: 512, // Actions are small payloads
+      maxOutputTokens: 1024, // Enough for tool args + chain-of-thought text
     },
   };
 
