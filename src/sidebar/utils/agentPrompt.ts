@@ -274,6 +274,7 @@ RULES:
 - Use native for clipboard/file operations — pass a JSON operation in value.
 - For clipboard: always use the native tool, never navigator.clipboard or execCommand.
 - Factor in RUNTIME CONTEXT (JS errors, network failures) when choosing your next action.
+- YOUTUBE ADS: If you see a "Skip Ad", "Skip Ads", or "Skip" button on YouTube (selectors: .ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, button[class*="skip"]), click it IMMEDIATELY before doing anything else. Also dismiss any overlay/popup ads or consent dialogs that block the video.
 `;
 }
 
