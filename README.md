@@ -26,7 +26,7 @@ AI-powered Chrome extension that can **see, understand, and interact** with any 
 | Frontend      | React 19, TypeScript, Vite                          |
 | Styling       | Vanilla CSS (Inter font, glassmorphism)             |
 | Backend       | Supabase Edge Functions (Deno)                      |
-| AI Models     | NVIDIA API (Kimi K2.5), Groq API (GPT-OSS-120B)     |
+| AI Models     | Groq API (GPT-OSS-120B, DeepSeek R1), OpenRouter (Llama 3.3 70B) |
 | Extension     | Chrome Manifest V3, Side Panel API                  |
 | Automation    | Content Scripts, Chrome DevTools Protocol (CDP)     |
 | Safety        | Policy engine with blocklists + risk escalation     |
@@ -139,7 +139,7 @@ PageClick/
 ### Prerequisites
 
 - Node.js 18+
-- A Supabase project with `KIMI_API_KEY` and `GROQ_API_KEY` in Edge Function secrets
+- A Supabase project with `GROQ_API_KEY` and `OPEN_ROUTER_KEY` in Edge Function secrets
 
 ### Install & Dev
 

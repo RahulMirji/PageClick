@@ -326,12 +326,12 @@ describe("parseToolCallResponse — provider routing", () => {
         expect(result.type).toBe("action");
     });
 
-    it("routes kimi-k2.5 to OpenAI adapter", () => {
+    it("routes deepseek-r1 to OpenAI adapter", () => {
         const openaiResp = makeOpenAIResponse("task_complete", {
             summary: "All done!",
             nextSteps: [],
         });
-        const result = parseToolCallResponse("kimi-k2.5", openaiResp);
+        const result = parseToolCallResponse("qwen3-32b", openaiResp);
         expect(result.type).toBe("complete");
     });
 });
@@ -386,7 +386,7 @@ describe("extractToolHistoryMessages — OpenAI format", () => {
             confidence: 0.95,
             risk: "low",
         });
-        const result = extractToolHistoryMessages("kimi-k2.5", rawResponse, {
+        const result = extractToolHistoryMessages("qwen3-32b", rawResponse, {
             success: true,
             extractedData: "$29.99",
         });

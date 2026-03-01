@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
 // ── Types ────────────────────────────────────────────────────────────
-type ModelId = "kimi-k2.5" | "gpt-oss-120b" | "llama-4-scout" | "gemini-3-pro";
+type ModelId = "gpt-oss-120b" | "qwen3-32b" | "llama-4-scout" | "llama-3.3-70b" | "gemini-3-pro";
 type Theme = "light" | "dark" | "system";
 
 interface Settings {
@@ -46,22 +46,28 @@ const MODELS: { id: ModelId; label: string; icon: string; desc: string }[] = [
     desc: "Best quality, slower",
   },
   {
-    id: "kimi-k2.5",
-    label: "Kimi K2.5",
-    icon: "🌙",
-    desc: "Fast, good reasoning",
-  },
-  {
     id: "gpt-oss-120b",
     label: "GPT-OSS 120B",
     icon: "⚡",
     desc: "Balanced speed & quality",
   },
   {
+    id: "qwen3-32b",
+    label: "Qwen3 32B",
+    icon: "🧠",
+    desc: "Strong reasoning model",
+  },
+  {
     id: "llama-4-scout",
     label: "Llama 4 Scout",
     icon: "🦙",
     desc: "Open-source, vision support",
+  },
+  {
+    id: "llama-3.3-70b",
+    label: "Llama 3.3 70B",
+    icon: "🦙",
+    desc: "Strong general-purpose",
   },
 ];
 

@@ -1067,6 +1067,18 @@ body {
   white-space: nowrap;
 }
 
+/* Model name badge */
+.model-badge {
+  font-size: 10px;
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
 /* Thinking Indicator */
 .thinking-indicator {
   display: flex;

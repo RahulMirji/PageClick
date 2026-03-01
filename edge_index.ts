@@ -7,20 +7,25 @@ const OPENAI_COMPAT_MODELS: Record<
   string,
   { apiUrl: string; model: string; apiKeyEnv: string }
 > = {
-  "kimi-k2.5": {
-    apiUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
-    model: "moonshotai/kimi-k2.5",
-    apiKeyEnv: "KIMI_API_KEY",
-  },
   "gpt-oss-120b": {
     apiUrl: "https://api.groq.com/openai/v1/chat/completions",
     model: "openai/gpt-oss-120b",
+    apiKeyEnv: "GROQ_API_KEY",
+  },
+  "qwen3-32b": {
+    apiUrl: "https://api.groq.com/openai/v1/chat/completions",
+    model: "qwen/qwen3-32b",
     apiKeyEnv: "GROQ_API_KEY",
   },
   "llama-4-scout": {
     apiUrl: "https://api.groq.com/openai/v1/chat/completions",
     model: "meta-llama/llama-4-scout-17b-16e-instruct",
     apiKeyEnv: "GROQ_API_KEY",
+  },
+  "llama-3.3-70b": {
+    apiUrl: "https://openrouter.ai/api/v1/chat/completions",
+    model: "meta-llama/llama-3.3-70b-instruct",
+    apiKeyEnv: "OPEN_ROUTER_KEY",
   },
 };
 
@@ -340,8 +345,21 @@ function stripAdditionalProperties(schema: any): any {
   return result;
 }
 
+/** Build auth headers, adding OpenRouter-specific ones when needed. */
+function buildAuthHeaders(apiUrl: string, apiKey: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  };
+  if (apiUrl.includes("openrouter.ai")) {
+    headers["HTTP-Referer"] = "https://pageclick.app";
+    headers["X-Title"] = "PageClick";
+  }
+  return headers;
+}
+
 /**
- * Calls an OpenAI-compatible endpoint (Groq / NVIDIA) with tools array.
+ * Calls an OpenAI-compatible endpoint (Groq / NVIDIA / OpenRouter) with tools array.
  * Non-streaming — returns the complete message object.
  */
 async function callOpenAIToolCall(
@@ -364,18 +382,15 @@ async function callOpenAIToolCall(
     try {
       const res = await fetch(apiUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers: buildAuthHeaders(apiUrl, apiKey),
         body: JSON.stringify({
           model,
           messages,
           tools: cleanTools,
-          tool_choice: "auto",
+          tool_choice: "required",
           stream: false,
-          temperature: 0.1, // Low temp for deterministic action selection
-          max_tokens: 512,  // Actions are small payloads
+          temperature: 0.1,
+          max_tokens: 1024,
         }),
       });
 
@@ -477,7 +492,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // --- OpenAI-compatible path (Kimi, Groq, etc.) ---
+    // --- OpenAI-compatible path (Groq, OpenRouter, etc.) ---
     const modelKey =
       requestedModel && OPENAI_COMPAT_MODELS[requestedModel]
         ? requestedModel
@@ -512,10 +527,7 @@ Deno.serve(async (req: Request) => {
 
     const response = await fetch(config.apiUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers: buildAuthHeaders(config.apiUrl, apiKey),
       body: JSON.stringify({
         model: config.model,
         messages: [

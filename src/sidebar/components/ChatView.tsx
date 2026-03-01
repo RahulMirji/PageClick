@@ -18,6 +18,7 @@ export interface Message {
   resumeTask?: ResumeTaskData;
   hidden?: boolean;
   tokenCount?: number;
+  modelId?: string;
 }
 
 interface ChatViewProps {
@@ -25,9 +26,18 @@ interface ChatViewProps {
   isLoading: boolean;
 }
 
-/** Strip all structured <<<...>>> blocks from content for display */
+const MODEL_LABELS: Record<string, string> = {
+  "gemini-3-pro": "Gemini",
+  "gpt-oss-120b": "GPT-OSS",
+  "qwen3-32b": "Qwen3",
+  "llama-4-scout": "Llama 4",
+  "llama-3.3-70b": "Llama 3.3",
+};
+
+/** Strip all structured <<<...>>> blocks and reasoning <think> tags from content for display */
 export function cleanDisplayContent(text: string): string {
   return text
+    .replace(/<think>[\s\S]*?<\/think>/g, "")
     .replace(/<<<ASK_USER>>>[\s\S]*?<<<END_ASK_USER>>>/g, "")
     .replace(/<<<TASK_READY>>>[\s\S]*?<<<END_TASK_READY>>>/g, "")
     .replace(
@@ -53,6 +63,8 @@ function ChatView({ messages, isLoading }: ChatViewProps) {
   const stripMarkdown = (md: string): string => {
     return (
       md
+        // Remove reasoning <think> blocks (Qwen3 chain-of-thought)
+        .replace(/<think>[\s\S]*?<\/think>/g, "")
         // Remove structured protocol blocks before markdown underscore transforms
         .replace(/<<<ASK_USER>>>[\s\S]*?<<<END_ASK_USER>>>/g, "")
         .replace(/<<<TASK_READY>>>[\s\S]*?<<<END_TASK_READY>>>/g, "")
@@ -317,6 +329,11 @@ function ChatView({ messages, isLoading }: ChatViewProps) {
                         </button>
                       </div>
                       <div className="actions-right">
+                        {msg.modelId && (
+                          <span className="model-badge">
+                            {MODEL_LABELS[msg.modelId] || msg.modelId}
+                          </span>
+                        )}
                         {msg.tokenCount && (
                           <span className="token-count">
                             ~{msg.tokenCount} tokens

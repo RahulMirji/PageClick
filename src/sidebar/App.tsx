@@ -155,7 +155,7 @@ function buildNativeStepFromGoal(goal: string): ActionStep | null {
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<ModelId>("gemini-3-pro");
+  const [selectedModel, setSelectedModel] = useState<ModelId>("llama-4-scout");
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("agent");
 
   // Auth state
@@ -673,7 +673,7 @@ function App() {
       if (err.name === "AbortError") return; // User stopped
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `Error: ${err.message}` },
+        { role: "assistant", content: `Error: ${err.message}`, modelId: selectedModel },
       ]);
     } finally {
       setIsLoading(false);
@@ -754,7 +754,7 @@ function App() {
               orchestrator.complete({ summary, nextSteps: [] });
               setMessages((prev) => [
                 ...prev,
-                { role: "assistant", content: summary },
+                { role: "assistant", content: summary, modelId: selectedModel },
               ]);
               saveMessage(convId, "assistant", summary).catch(console.warn);
               requestTaskNotification(
@@ -808,7 +808,7 @@ function App() {
             // Insert a new assistant message to host the plan confirmation card
             const planMsgIndex = await new Promise<number>((resolve) => {
               setMessages((prev) => {
-                const next = [...prev, { role: "assistant" as const, content: "" }];
+                const next = [...prev, { role: "assistant" as const, content: "", modelId: selectedModel }];
                 messagesRef.current = next;
                 resolve(next.length - 1); // index of the new assistant message
                 return next;
@@ -854,7 +854,7 @@ function App() {
             } else {
               orchestrator.abort("Cancelled by user");
               const cancelMsg = "Task cancelled. Let me know if you need anything else!";
-              setMessages((prev) => [...prev, { role: "assistant", content: cancelMsg }]);
+              setMessages((prev) => [...prev, { role: "assistant", content: cancelMsg, modelId: selectedModel }]);
               saveMessage(convId, "assistant", cancelMsg).catch(console.warn);
               break;
             }
@@ -863,7 +863,7 @@ function App() {
           if (parsed.type === "ask_user") {
             // Show questions as assistant message and wait
             const questionText = parsed.block.questions.join("\n");
-            setMessages((prev) => [...prev, { role: "assistant", content: questionText }]);
+            setMessages((prev) => [...prev, { role: "assistant", content: questionText, modelId: selectedModel }]);
             setIsLoading(false);
             return;
           }
@@ -906,7 +906,7 @@ function App() {
 
             orchestrator.complete(parsed.block);
             const summary = parsed.block.summary;
-            setMessages((prev) => [...prev, { role: "assistant", content: summary }]);
+            setMessages((prev) => [...prev, { role: "assistant", content: summary, modelId: selectedModel }]);
             saveMessage(convId, "assistant", summary).catch(console.warn);
             requestTaskNotification("✅ Task Complete", summary.slice(0, 100));
             break;
@@ -1496,7 +1496,7 @@ function App() {
     // Add placeholder message
     setMessages((prev) => [
       ...prev,
-      { role: "assistant", content: "", hidden },
+      { role: "assistant", content: "", hidden, modelId: selectedModel },
     ]);
 
     try {
@@ -1552,6 +1552,7 @@ function App() {
           role: "assistant",
           content: cleanText,
           tokenCount: tokens || undefined,
+          modelId: selectedModel,
         });
         saveMessage(convId, "assistant", encoded).catch(console.warn);
       }

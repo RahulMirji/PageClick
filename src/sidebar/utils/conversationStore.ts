@@ -114,6 +114,7 @@ const META_PREFIX = "__PC_META__:";
 interface MessageMeta {
   text?: string;
   tokenCount?: number;
+  modelId?: string;
   planConfirm?: { summary: string; status: string };
   resumeTask?: { summary: string; status: string };
   taskProgress?: {
@@ -129,6 +130,10 @@ export function encodeMessageContent(msg: Message): string {
 
   if (msg.tokenCount) {
     meta.tokenCount = msg.tokenCount;
+    hasExtra = true;
+  }
+  if (msg.modelId) {
+    meta.modelId = msg.modelId;
     hasExtra = true;
   }
   if (msg.planConfirm) {
@@ -179,12 +184,15 @@ function decodeMessageContent(
     if (meta.tokenCount) {
       msg.tokenCount = meta.tokenCount;
     }
+    if (meta.modelId) {
+      msg.modelId = meta.modelId;
+    }
     if (meta.planConfirm) {
       msg.planConfirm = {
         summary: meta.planConfirm.summary,
         status: meta.planConfirm.status as "approved" | "rejected" | "pending",
-        onProceed: () => {},
-        onReject: () => {},
+        onProceed: () => { },
+        onReject: () => { },
       };
     }
     if (meta.resumeTask) {
@@ -194,7 +202,7 @@ function decodeMessageContent(
           meta.resumeTask.status === "pending"
             ? "resumed"
             : (meta.resumeTask.status as "pending" | "resumed"),
-        onResume: () => {},
+        onResume: () => { },
       };
     }
     if (meta.taskProgress) {

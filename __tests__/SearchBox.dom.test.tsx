@@ -38,9 +38,9 @@ describe("SearchBox DOM interactions", () => {
     );
 
     fireEvent.click(screen.getByText("Gemini 3 Flash"));
-    fireEvent.click(screen.getByText("Kimi K2.5"));
+    fireEvent.click(screen.getByText("GPT-OSS"));
 
-    expect(onModelChange).toHaveBeenCalledWith("kimi-k2.5");
+    expect(onModelChange).toHaveBeenCalledWith("gpt-oss-120b");
   });
 
   it("calls onStop when loading and submit button is clicked", () => {
