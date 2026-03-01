@@ -13,11 +13,12 @@ import { triggerPageScan } from "./utils/pageScanAnimation";
 import { evaluateStep, logAudit } from "../shared/safety-policy";
 import type { PolicyVerdict } from "../shared/safety-policy";
 import type { Message } from "./components/ChatView";
-import type { ModelId } from "./components/SearchBox";
+import type { ModelId, InteractionMode } from "./components/SearchBox";
 import type {
   ActionStep,
   CheckpointBlock,
   PageSnapshot,
+  PageObservation,
 } from "../shared/messages";
 import type { TaskProgress } from "./components/TaskProgressCard";
 import type { PlanConfirmData } from "./components/TaskPlanConfirm";
@@ -43,7 +44,6 @@ import {
   buildClarificationPrompt,
   buildExecutionPrompt,
   buildInfoPrompt,
-  isTaskRequest,
 } from "./utils/agentPrompt";
 import { parseToolCallResponse, extractToolHistoryMessages } from "./utils/toolCallAdapter";
 import { PAGECLICK_TOOLS, CLARIFICATION_TOOLS, toGeminiTools } from "../shared/toolSchemas";
@@ -156,6 +156,7 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelId>("gemini-3-pro");
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>("agent");
 
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -188,6 +189,10 @@ function App() {
   const messagesRef = useRef<Message[]>([]);
   /** Tool-call history (assistant+tool message pairs) for the current task — API-only, not shown in UI */
   const toolHistoryRef = useRef<any[]>([]);
+  const consecutiveFailuresRef = useRef<{ action: string; count: number }>({
+    action: "",
+    count: 0,
+  });
   const activeProjectRef = useRef<Project | null>(null);
 
   // Persistent progress tracking across all loop iterations
@@ -227,6 +232,22 @@ function App() {
         const next = [...prev];
         if (next[msgIndex]) {
           next[msgIndex].planConfirm = planConfirm;
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const updateResumeCard = useCallback(
+    (
+      msgIndex: number,
+      resumeTask: NonNullable<Message["resumeTask"]>,
+    ) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        if (next[msgIndex]) {
+          next[msgIndex].resumeTask = resumeTask;
         }
         return next;
       });
@@ -467,6 +488,45 @@ function App() {
     console.log(`[Agent] waitForPageLoad: done in ${(performance.now() - t0).toFixed(0)}ms`);
   };
 
+  const captureObservation = useCallback(async (): Promise<PageObservation | null> => {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "CAPTURE_OBSERVATION",
+      });
+      if (
+        response?.type === "CAPTURE_OBSERVATION_RESULT" &&
+        response.payload
+      ) {
+        return response.payload as PageObservation;
+      }
+      return null;
+    } catch (e) {
+      console.warn("Failed to capture observation:", e);
+      return null;
+    }
+  }, []);
+
+  const capturePostActionState = useCallback(async (): Promise<PageSnapshot | null> => {
+    let latest: PageSnapshot | null = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      latest = await capturePage();
+      const nodeCount = latest?.nodes?.length ?? 0;
+      const url = latest?.url || "";
+      const aboutBlank = url === "about:blank";
+
+      if (latest && nodeCount >= 5 && !aboutBlank) {
+        return latest;
+      }
+
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+
+    return latest;
+  }, [capturePage]);
+
   const handleStop = useCallback(() => {
     // Abort in-flight fetch
     abortRef.current?.abort();
@@ -524,7 +584,11 @@ function App() {
           : m,
       )
       .filter(
-        (m) => m.content.trim().length > 0 || m.planConfirm || m.taskProgress,
+        (m) =>
+          m.content.trim().length > 0 ||
+          m.planConfirm ||
+          m.resumeTask ||
+          m.taskProgress,
       ); // Keep plan/progress cards
     setMessages(cleanedMsgs);
     setCurrentConversationId(convId);
@@ -579,9 +643,9 @@ function App() {
       return;
     }
 
-    // New request: decide if task or info
-    const isTask = isTaskRequest(text);
-    console.log(`[Agent] handleSend: "${text.slice(0, 80)}" → isTask=${isTask}`);
+    // Use the explicit mode toggle to decide agent vs chat
+    const isTask = interactionMode === "agent";
+    console.log(`[Agent] handleSend: "${text.slice(0, 80)}" → mode=${interactionMode}, isTask=${isTask}`);
 
     if (isTask) {
       resetProgressTracking();
@@ -589,7 +653,7 @@ function App() {
       console.log("[Agent] Starting agent loop...");
       await runAgentLoop(convId);
     } else {
-      // Info request — one-shot answer
+      // Chat mode — one-shot answer
       await runInfoRequest(convId, text, images);
     }
   };
@@ -617,9 +681,12 @@ function App() {
     }
   };
 
-  const runAgentLoop = async (convId: string) => {
+  const runAgentLoop = async (convId: string, opts?: { resume?: boolean }) => {
     const orchestrator = orchestratorRef.current;
-    toolHistoryRef.current = []; // Reset tool history for new task
+    if (!opts?.resume) {
+      toolHistoryRef.current = []; // Reset tool history for a new task
+      consecutiveFailuresRef.current = { action: "", count: 0 };
+    }
     stopScanRef.current = await triggerPageScan();
 
     try {
@@ -630,6 +697,7 @@ function App() {
         const state = orchestrator.getState();
         console.log(`[Agent] ── Loop iteration ${state.loopCount} | phase=${state.phase} | goal="${state.goal.slice(0, 60)}"`);
         const snapshot = await capturePage();
+        let loopSnapshot = snapshot;
 
         // Poll CDP runtime context (network log, console, JS errors)
         const cdpRes = await chrome.runtime
@@ -887,7 +955,37 @@ function App() {
               accumulatedProgressRef.current.steps[globalIndex].status = result.success ? "completed" : "failed";
               updateProgress(accumulatedProgressRef.current);
 
-              if (!result.success) break;
+              if (!result.success) {
+                const prev = consecutiveFailuresRef.current;
+                const nextCount =
+                  prev.action === step.action ? prev.count + 1 : 1;
+                consecutiveFailuresRef.current = {
+                  action: step.action,
+                  count: nextCount,
+                };
+
+                if (nextCount >= 3) {
+                  console.warn(
+                    `[Agent] Auto-recovery: ${nextCount} consecutive "${step.action}" failures. Injecting scroll(down).`,
+                  );
+                  const recoveryStep: ActionStep = {
+                    action: "scroll",
+                    selector: "body",
+                    value: "down",
+                    confidence: 0.8,
+                    risk: "low",
+                    description:
+                      "Auto-recovery: scroll down to reveal additional elements",
+                  };
+                  const recoveryResult = await executeStep(recoveryStep);
+                  orchestrator.recordStepResult(recoveryResult);
+                  results.push(recoveryResult);
+                  consecutiveFailuresRef.current = { action: "", count: 0 };
+                }
+                break;
+              } else {
+                consecutiveFailuresRef.current = { action: "", count: 0 };
+              }
 
               if (step.action === "navigate") {
                 console.log(`[Agent] Navigate detected — waiting for page load...`);
@@ -895,6 +993,11 @@ function App() {
                 console.log(`[Agent] Page loaded — re-triggering scan`);
                 stopScanRef.current?.();
                 stopScanRef.current = await triggerPageScan();
+              }
+
+              const postActionSnapshot = await capturePostActionState();
+              if (postActionSnapshot) {
+                loopSnapshot = postActionSnapshot;
               }
             }
 
@@ -908,16 +1011,96 @@ function App() {
             );
             toolHistoryRef.current.push(...historyMsgs);
 
+            const latestObservation = lastResult?.observation;
+            const flowState = {
+              url: latestObservation?.url || pageUrlRef.current,
+              stepIndicator:
+                latestObservation?.stepIndicator || loopSnapshot?.formContext?.stepIndicator,
+              activeStep:
+                latestObservation?.activeStep || loopSnapshot?.formContext?.activeStep,
+              filledFields:
+                latestObservation?.filledFields ?? loopSnapshot?.formContext?.filledFields,
+              totalFields:
+                latestObservation?.totalFields ?? loopSnapshot?.formContext?.totalFields,
+            };
+
             const cont = orchestrator.completeLoop({
               iteration: state.loopCount + 1,
               pageUrl: pageUrlRef.current,
               plan,
               results,
+              flowState,
               timestamp: Date.now(),
             });
             console.log(`[Agent] Loop iteration ${state.loopCount + 1} complete in ${(performance.now() - loopT0).toFixed(0)}ms — continue=${cont}`);
             retried = false; // Reset retry flag after successful action
-            if (!cont) break;
+            if (!cont) {
+              const current = orchestrator.getState();
+              if (
+                current.phase === "error" &&
+                current.statusMessage === "Loop budget exhausted"
+              ) {
+                const completed =
+                  accumulatedProgressRef.current.steps.filter(
+                    (s) => s.status === "completed",
+                  ).length;
+                const total = accumulatedProgressRef.current.steps.length;
+                const resumeSummary = `I completed ${completed} of ${total} tracked steps before hitting the loop budget (${current.loopCount}/${current.maxLoops}). Want me to continue from here?`;
+
+                const resumeMsgIndex = await new Promise<number>((resolve) => {
+                  setMessages((prev) => {
+                    const next = [
+                      ...prev,
+                      { role: "assistant" as const, content: resumeSummary },
+                    ];
+                    messagesRef.current = next;
+                    resolve(next.length - 1);
+                    return next;
+                  });
+                });
+
+                const onResume = async () => {
+                  updateResumeCard(resumeMsgIndex, {
+                    summary: resumeSummary,
+                    status: "resumed",
+                    onResume: () => { },
+                  });
+                  abortRef.current = new AbortController();
+                  setIsLoading(true);
+                  const resumed = orchestratorRef.current.resumeAfterBudgetExhausted();
+                  if (!resumed) {
+                    setMessages((prev) => [
+                      ...prev,
+                      {
+                        role: "assistant",
+                        content:
+                          "Unable to resume because this task is no longer in a resumable state.",
+                      },
+                    ]);
+                    setIsLoading(false);
+                    return;
+                  }
+                  await runAgentLoop(convId, { resume: true });
+                };
+
+                const resumeMsg: Message = {
+                  role: "assistant",
+                  content: resumeSummary,
+                  resumeTask: {
+                    summary: resumeSummary,
+                    status: "pending",
+                    onResume,
+                  },
+                };
+                updateResumeCard(resumeMsgIndex, resumeMsg.resumeTask!);
+                saveMessage(
+                  convId,
+                  "assistant",
+                  encodeMessageContent(resumeMsg),
+                ).catch(console.warn);
+              }
+              break;
+            }
 
           } else {
             // error / unknown — try to salvage a navigate action from text response
@@ -956,7 +1139,25 @@ function App() {
                 await waitForPageLoad();
                 stopScanRef.current?.();
                 stopScanRef.current = await triggerPageScan();
-                orchestrator.completeLoop({ iteration: state.loopCount + 1, pageUrl: pageUrlRef.current, plan: salvagedPlan, results: [navResult], timestamp: Date.now() });
+                const postNavSnapshot = await capturePostActionState();
+                orchestrator.completeLoop({
+                  iteration: state.loopCount + 1,
+                  pageUrl: pageUrlRef.current,
+                  plan: salvagedPlan,
+                  results: [navResult],
+                  flowState: {
+                    url: navResult?.observation?.url || pageUrlRef.current,
+                    stepIndicator:
+                      navResult?.observation?.stepIndicator || postNavSnapshot?.formContext?.stepIndicator || snapshot?.formContext?.stepIndicator,
+                    activeStep:
+                      navResult?.observation?.activeStep || postNavSnapshot?.formContext?.activeStep || snapshot?.formContext?.activeStep,
+                    filledFields:
+                      navResult?.observation?.filledFields ?? postNavSnapshot?.formContext?.filledFields ?? snapshot?.formContext?.filledFields,
+                    totalFields:
+                      navResult?.observation?.totalFields ?? postNavSnapshot?.formContext?.totalFields ?? snapshot?.formContext?.totalFields,
+                  },
+                  timestamp: Date.now(),
+                });
                 retried = false;
                 continue;
               }
@@ -1030,6 +1231,12 @@ function App() {
   };
 
   const executeStep = useCallback(async (step: ActionStep) => {
+    const withObservation = async <T extends Record<string, any>>(result: T) => {
+      const observation = await captureObservation();
+      if (!observation) return result;
+      return { ...result, observation };
+    };
+
     // Evaluate safety
     const verdict = evaluateStep(step, pageUrlRef.current);
     const logOutcome = async (result: { success: boolean }) => {
@@ -1112,7 +1319,7 @@ function App() {
           durationMs: 0,
         };
         await logOutcome(result);
-        return result;
+        return await withObservation(result);
       }
       // Handle 'download' action — saves a file found on the page
       if (step.action === "download") {
@@ -1126,13 +1333,13 @@ function App() {
           targetUrl = evalRes?.result || "";
         }
         if (!targetUrl) {
-          return {
+          return await withObservation({
             success: false,
             action: "download",
             selector: step.selector,
             error: "Could not resolve download URL",
             durationMs: 0,
-          };
+          });
         }
         const dlRes = await chrome.runtime.sendMessage({
           type: "DOWNLOAD_FILE",
@@ -1147,7 +1354,7 @@ function App() {
           durationMs: 0,
         };
         await logOutcome(result);
-        return result;
+        return await withObservation(result);
       }
       // Handle 'tabgroup' action — organize tabs into groups
       if (step.action === "tabgroup") {
@@ -1173,7 +1380,7 @@ function App() {
               durationMs: 0,
             };
             await logOutcome(result);
-            return result;
+            return await withObservation(result);
           } else if (op === "add") {
             const res = await chrome.runtime.sendMessage({
               type: "TAB_GROUP_ADD",
@@ -1191,7 +1398,7 @@ function App() {
               durationMs: 0,
             };
             await logOutcome(result);
-            return result;
+            return await withObservation(result);
           } else {
             // list
             const res = await chrome.runtime.sendMessage({
@@ -1210,16 +1417,16 @@ function App() {
               durationMs: 0,
             };
             await logOutcome(result);
-            return result;
+            return await withObservation(result);
           }
         } catch (e: any) {
-          return {
+          return await withObservation({
             success: false,
             action: "tabgroup",
             selector: "",
             error: `Tab group error: ${e.message}`,
             durationMs: 0,
-          };
+          });
         }
       }
       // Handle 'native' action — execute local host operation via Native Messaging
@@ -1236,7 +1443,7 @@ function App() {
             durationMs: 0,
           };
           await logOutcome(result);
-          return result;
+          return await withObservation(result);
         }
         const nativeRes = await chrome.runtime.sendMessage({
           type: "NATIVE_HOST_CALL",
@@ -1255,7 +1462,7 @@ function App() {
           durationMs: 0,
         };
         await logOutcome(result);
-        return result;
+        return await withObservation(result);
       }
       console.log(`[Agent] executeStep: sending EXECUTE_ACTION to background for ${step.action}`);
       const res = await chrome.runtime.sendMessage({
@@ -1264,17 +1471,17 @@ function App() {
       });
       console.log(`[Agent] executeStep: EXECUTE_ACTION response:`, res?.result?.success, res?.result?.error || '');
       await logOutcome(res.result);
-      return res.result;
+      return await withObservation(res.result);
     } catch (e: any) {
-      return {
+      return await withObservation({
         success: false,
         action: step.action,
         selector: step.selector,
         error: e.message,
         durationMs: 0,
-      };
+      });
     }
-  }, []);
+  }, [captureObservation]);
 
   const streamResponse = async (
     response: Response,
@@ -1433,6 +1640,8 @@ function App() {
                 isLoading={isLoading}
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
+                interactionMode={interactionMode}
+                onModeChange={setInteractionMode}
               />
             </div>
           )}

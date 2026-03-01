@@ -19,6 +19,7 @@ import type {
     AskUserBlock,
     ToolHistoryMessage,
     GeminiToolHistoryMessage,
+    PageObservation,
 } from "../../shared/messages";
 
 // ── Result types ───────────────────────────────────────────────────
@@ -37,6 +38,7 @@ const ACTION_TOOL_NAMES = new Set<string>([
     "click",
     "input",
     "select",
+    "select_date",
     "scroll",
     "extract",
     "navigate",
@@ -60,6 +62,12 @@ function argsToActionStep(
         action: toolName as ActionType,
         selector: typeof args.selector === "string" ? args.selector : "",
         value: typeof args.value === "string" ? args.value : undefined,
+        clearFirst:
+            typeof args.clear_first === "boolean"
+                ? args.clear_first
+                : typeof args.clearFirst === "boolean"
+                    ? args.clearFirst
+                    : undefined,
         confidence:
             typeof args.confidence === "number"
                 ? Math.max(0, Math.min(1, args.confidence))
@@ -243,7 +251,7 @@ function dispatchTool(
         default:
             return {
                 type: "error",
-                error: `Unknown tool name: "${name}". Expected one of: click, input, select, scroll, extract, navigate, eval, download, tabgroup, native, task_complete, checkpoint, ask_user, task_ready.`,
+                error: `Unknown tool name: "${name}". Expected one of: click, input, select, select_date, scroll, extract, navigate, eval, download, tabgroup, native, task_complete, checkpoint, ask_user, task_ready.`,
             };
     }
 }
@@ -286,12 +294,18 @@ export function parseToolCallResponse(
 export function extractToolHistoryMessages(
     modelKey: string,
     rawResponse: any,
-    toolResult: { success: boolean; extractedData?: string; error?: string },
+    toolResult: {
+        success: boolean;
+        extractedData?: string;
+        error?: string;
+        observation?: PageObservation;
+    },
 ): (ToolHistoryMessage | GeminiToolHistoryMessage)[] {
     const resultPayload = JSON.stringify({
         success: toolResult.success,
         ...(toolResult.extractedData ? { data: toolResult.extractedData } : {}),
         ...(toolResult.error ? { error: toolResult.error } : {}),
+        ...(toolResult.observation ? { observation: toolResult.observation } : {}),
     });
 
     if (modelKey.startsWith("gemini")) {

@@ -22,6 +22,11 @@ export interface ExecutionResult {
 
 function waitForDomStable(timeoutMs = 3000): Promise<void> {
   return new Promise((resolve) => {
+    if (typeof MutationObserver === "undefined") {
+      setTimeout(resolve, 150);
+      return;
+    }
+
     let timer: ReturnType<typeof setTimeout>;
     let settled = false;
 
@@ -237,16 +242,54 @@ async function executeClick(el: Element): Promise<void> {
   }
 }
 
-async function executeInput(el: Element, value: string): Promise<void> {
+async function detectAutocompletePopup(timeoutMs = 500): Promise<boolean> {
+  const start = performance.now();
+  while (performance.now() - start < timeoutMs) {
+    const popup = document.querySelector(
+      '[role="listbox"], [role="combobox"][aria-expanded="true"]',
+    ) as Element | null;
+    if (popup) {
+      const rect = popup.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) return true;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+}
+
+function setInputValueNative(
+  input: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+): void {
+  const proto =
+    input instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+  const setter = descriptor?.set;
+  if (!setter) {
+    input.value = value;
+    return;
+  }
+  setter.call(input, value);
+}
+
+async function executeInputWithOptions(
+  el: Element,
+  value: string,
+  clearFirst: boolean,
+): Promise<{ verified: boolean; autocompleteShown: boolean; actualValue: string }> {
   scrollIntoViewIfNeeded(el);
   await new Promise((r) => setTimeout(r, 100));
 
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
     el.focus();
+    const initialValue = el.value || "";
 
-    // Clear existing value
-    el.value = "";
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    if (clearFirst) {
+      el.value = "";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
 
     // Type character by character for better React compatibility
     for (const char of value) {
@@ -262,11 +305,40 @@ async function executeInput(el: Element, value: string): Promise<void> {
     }
 
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    const expectedValue = clearFirst ? value : initialValue + value;
+    let actualValue = el.value;
+    if (actualValue !== expectedValue) {
+      setInputValueNative(el, expectedValue);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      actualValue = el.value;
+    }
+    const autocompleteShown = await detectAutocompletePopup(500);
+    return {
+      verified: actualValue === expectedValue,
+      autocompleteShown,
+      actualValue,
+    };
   } else if (el instanceof HTMLElement && el.isContentEditable) {
     el.focus();
-    el.textContent = value;
+    const initialText = el.textContent || "";
+    el.textContent = clearFirst ? value : initialText + value;
     el.dispatchEvent(new Event("input", { bubbles: true }));
+    const expectedValue = clearFirst ? value : initialText + value;
+    const actualValue = el.textContent || "";
+    const autocompleteShown = await detectAutocompletePopup(500);
+    return {
+      verified: actualValue === expectedValue,
+      autocompleteShown,
+      actualValue,
+    };
   }
+
+  return {
+    verified: false,
+    autocompleteShown: false,
+    actualValue: "",
+  };
 }
 
 async function executeScroll(el: Element, value?: string): Promise<void> {
@@ -370,6 +442,62 @@ async function executeSelect(el: Element, value: string): Promise<void> {
   }
 }
 
+function isIsoDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+async function executeSelectDate(el: Element, value: string): Promise<void> {
+  if (!isIsoDate(value)) {
+    throw new Error(
+      `Invalid date format "${value}". Expected YYYY-MM-DD.`,
+    );
+  }
+
+  scrollIntoViewIfNeeded(el);
+  await new Promise((r) => setTimeout(r, 100));
+
+  if (el instanceof HTMLInputElement) {
+    el.focus();
+    if (typeof el.showPicker === "function") {
+      try {
+        el.showPicker();
+      } catch {
+        // Ignore and continue with value assignment fallback.
+      }
+    }
+
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    if (nativeSetter) {
+      nativeSetter.call(el, value);
+    } else {
+      el.value = value;
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+
+    if (el.value !== value) {
+      throw new Error(
+        `Date input did not accept value "${value}". Actual value is "${el.value}".`,
+      );
+    }
+    return;
+  }
+
+  // Fallback for custom date controls: set text and fire input events.
+  if (el instanceof HTMLElement && el.isContentEditable) {
+    el.focus();
+    el.textContent = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+
+  throw new Error("select_date target must be an input or editable date field");
+}
+
 // ── Main executor ─────────────────────────────────────────────────
 
 export async function executeAction(
@@ -439,8 +567,31 @@ export async function executeAction(
           "color: #22d3ee",
           step.value,
         );
-        await executeInput(el, step.value);
+        const inputResult = await executeInputWithOptions(
+          el,
+          step.value,
+          step.clearFirst ?? true,
+        );
+        if (!inputResult.verified) {
+          return {
+            success: false,
+            action: step.action,
+            selector: step.selector,
+            error: `Input verification failed. Expected "${step.value}", got "${inputResult.actualValue}"`,
+            durationMs: performance.now() - start,
+          };
+        }
         flashElement(el);
+        if (inputResult.autocompleteShown) {
+          const duration = performance.now() - start;
+          return {
+            success: true,
+            action: step.action,
+            selector: step.selector,
+            extractedData: "Autocomplete dropdown detected",
+            durationMs: duration,
+          };
+        }
         break;
 
       case "scroll":
@@ -501,6 +652,25 @@ export async function executeAction(
         flashElement(el);
         break;
 
+      case "select_date":
+        if (!step.value) {
+          return {
+            success: false,
+            action: step.action,
+            selector: step.selector,
+            error: "select_date action requires a date value (YYYY-MM-DD)",
+            durationMs: performance.now() - start,
+          };
+        }
+        console.log(
+          "%c[PageClick:CS] │ Executing SELECT_DATE:",
+          "color: #22d3ee",
+          step.value,
+        );
+        await executeSelectDate(el, step.value);
+        flashElement(el);
+        break;
+
       default:
         console.warn(
           "%c[PageClick:CS] └── Unknown action:",
@@ -517,6 +687,16 @@ export async function executeAction(
     }
 
     // Apply wait strategy
+    if (
+      step.action === "click" ||
+      step.action === "input" ||
+      step.action === "select" ||
+      step.action === "select_date"
+    ) {
+      // Interaction actions often trigger SPA re-renders without URL changes.
+      await waitForDomStable(step.timeoutMs ?? 3000);
+    }
+
     console.log(
       "%c[PageClick:CS] │ Applying wait strategy:",
       "color: #22d3ee",

@@ -10,9 +10,11 @@ import {
 
 export type ModelId =
   | "kimi-k2.5"
-  | "gpt-oss-20b"
+  | "gpt-oss-120b"
   | "llama-4-scout"
   | "gemini-3-pro";
+
+export type InteractionMode = "agent" | "chat";
 
 interface ModelOption {
   id: ModelId;
@@ -23,7 +25,7 @@ interface ModelOption {
 const MODELS: ModelOption[] = [
   { id: "gemini-3-pro", label: "Gemini 3 Flash", icon: "💎" },
   { id: "kimi-k2.5", label: "Kimi K2.5", icon: "🌙" },
-  { id: "gpt-oss-20b", label: "GPT-OSS", icon: "⚡" },
+  { id: "gpt-oss-120b", label: "GPT-OSS", icon: "⚡" },
   { id: "llama-4-scout", label: "Llama 4", icon: "🦙" },
 ];
 
@@ -33,6 +35,8 @@ interface SearchBoxProps {
   isLoading: boolean;
   selectedModel: ModelId;
   onModelChange: (model: ModelId) => void;
+  interactionMode: InteractionMode;
+  onModeChange: (mode: InteractionMode) => void;
 }
 
 function SearchBox({
@@ -41,6 +45,8 @@ function SearchBox({
   isLoading,
   selectedModel,
   onModelChange,
+  interactionMode,
+  onModeChange,
 }: SearchBoxProps) {
   const [query, setQuery] = useState("");
   const [showModelMenu, setShowModelMenu] = useState(false);
@@ -236,7 +242,7 @@ function SearchBox({
         <textarea
           ref={textareaRef}
           className="search-textarea"
-          placeholder="Ask anything..."
+          placeholder={interactionMode === "agent" ? "I'm ready, tell me what to do..." : "Ask anything..."}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -278,6 +284,21 @@ function SearchBox({
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
+          </button>
+
+          <button
+            className={`mode-toggle ${interactionMode}`}
+            onClick={() =>
+              onModeChange(interactionMode === "agent" ? "chat" : "agent")
+            }
+            aria-label={`Switch to ${interactionMode === "agent" ? "chat" : "agent"} mode`}
+          >
+            <span className="mode-toggle-label">
+              {interactionMode === "agent" ? "Agent" : "Chat"}
+            </span>
+            <div className="mode-toggle-switch">
+              <div className="mode-toggle-knob"></div>
+            </div>
           </button>
         </div>
         <div className="search-actions-right">

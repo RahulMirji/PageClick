@@ -39,6 +39,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true; // keep channel open
   }
 
+  if (message.type === "CAPTURE_OBSERVATION") {
+    handleCaptureObservation(message, sendResponse);
+    return true;
+  }
+
   // EXECUTE_ACTION — handle navigate in background, forward others to content script
   if (message.type === "EXECUTE_ACTION") {
     const step = message.step;
@@ -380,6 +385,68 @@ async function handleCapturePage(
       type: "CAPTURE_PAGE_RESULT",
       payload: null,
       error: err.message || "Capture failed",
+    });
+  }
+}
+
+async function handleCaptureObservation(
+  _message: any,
+  sendResponse: (response: any) => void,
+) {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs[0];
+
+    if (!tab?.id) {
+      sendResponse({
+        type: "CAPTURE_OBSERVATION_RESULT",
+        payload: null,
+        error: "No active tab found",
+      });
+      return;
+    }
+
+    const url = tab.url || "";
+    const isRestricted =
+      url.startsWith("chrome://") ||
+      url.startsWith("chrome-extension://") ||
+      url.startsWith("about:") ||
+      url.startsWith("edge://") ||
+      url.startsWith("brave://");
+
+    if (isRestricted) {
+      sendResponse({
+        type: "CAPTURE_OBSERVATION_RESULT",
+        payload: {
+          url,
+          title: tab.title || "",
+          newElements: [],
+          errorMessages: [],
+          capturedAt: Date.now(),
+        },
+      });
+      return;
+    }
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["content.js"],
+      });
+    } catch {
+      // Script may already be injected
+    }
+
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: "CAPTURE_OBSERVATION",
+    });
+    sendResponse(response);
+  } catch (err: any) {
+    console.error("Background: CAPTURE_OBSERVATION failed:", err);
+    sendResponse({
+      type: "CAPTURE_OBSERVATION_RESULT",
+      payload: null,
+      error: err.message || "Observation capture failed",
     });
   }
 }

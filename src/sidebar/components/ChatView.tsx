@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TaskProgressCard from "./TaskProgressCard";
 import TaskPlanConfirm from "./TaskPlanConfirm";
+import TaskResumeCard, { type ResumeTaskData } from "./TaskResumeCard";
 import ArtifactViewer from "./ArtifactViewer";
 import { downloadText } from "../utils/downloadService";
 import type { TaskProgress } from "./TaskProgressCard";
@@ -14,6 +15,7 @@ export interface Message {
   images?: string[];
   taskProgress?: TaskProgress;
   planConfirm?: PlanConfirmData;
+  resumeTask?: ResumeTaskData;
   hidden?: boolean;
   tokenCount?: number;
 }
@@ -116,6 +118,7 @@ function ChatView({ messages, isLoading }: ChatViewProps) {
         if (
           msg.hidden &&
           !msg.planConfirm &&
+          !msg.resumeTask &&
           !(msg.taskProgress && msg.taskProgress.steps.length > 0)
         ) {
           return null;
@@ -180,6 +183,9 @@ function ChatView({ messages, isLoading }: ChatViewProps) {
                 {msg.taskProgress && msg.taskProgress.steps.length > 0 && (
                   <TaskProgressCard progress={msg.taskProgress} />
                 )}
+
+                {/* Resume card when loop budget is exhausted */}
+                {msg.resumeTask && <TaskResumeCard resume={msg.resumeTask} />}
 
                 {/* Show action buttons on every completed assistant message.
                                     The last message suppresses them while it's still streaming. */}

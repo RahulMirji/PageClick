@@ -30,6 +30,8 @@ const RISK_COLORS: Record<
 const ACTION_ICONS: Record<string, string> = {
   click: "🖱️",
   input: "⌨️",
+  select: "🧭",
+  select_date: "📅",
   scroll: "📜",
   extract: "📋",
   navigate: "🔗",

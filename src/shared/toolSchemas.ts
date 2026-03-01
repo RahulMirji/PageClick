@@ -99,7 +99,7 @@ const inputTool: OpenAITool = {
     function: {
         name: "input",
         description:
-            "Type text into an input, textarea, or contentEditable element. Types character-by-character to trigger React/Vue change events. Clears existing value first.",
+            "Type text into an input, textarea, or contentEditable element. Types character-by-character to trigger React/Vue change events. By default, clears existing value first unless clear_first is false.",
         strict: true,
         parameters: {
             type: "object",
@@ -108,6 +108,11 @@ const inputTool: OpenAITool = {
                 value: {
                     type: "string",
                     description: "The text to type into the element.",
+                },
+                clear_first: {
+                    type: "boolean",
+                    description:
+                        "Optional. If true (default), clear existing value before typing. Set false to append to current value.",
                 },
                 confidence: confidenceParam,
                 risk: riskParam,
@@ -140,6 +145,32 @@ const selectTool: OpenAITool = {
                 description: descriptionParam,
             },
             required: ["selector", "value", "confidence", "risk", "description"],
+            additionalProperties: false,
+        },
+    },
+};
+
+const selectDateTool: OpenAITool = {
+    type: "function",
+    function: {
+        name: "select_date",
+        description:
+            "Set a date value for date inputs and date-like controls. Use ISO format YYYY-MM-DD in value. Prefer this over generic input when targeting calendars/date pickers.",
+        strict: true,
+        parameters: {
+            type: "object",
+            properties: {
+                selector: selectorParam,
+                value: {
+                    type: "string",
+                    description: "Date value in ISO format YYYY-MM-DD.",
+                },
+                confidence: confidenceParam,
+                risk: riskParam,
+                description: descriptionParam,
+                waitFor: waitForParam,
+            },
+            required: ["selector", "value", "confidence", "risk", "description", "waitFor"],
             additionalProperties: false,
         },
     },
@@ -433,6 +464,7 @@ export const PAGECLICK_TOOLS: OpenAITool[] = [
     clickTool,
     inputTool,
     selectTool,
+    selectDateTool,
     scrollTool,
     extractTool,
     navigateTool,

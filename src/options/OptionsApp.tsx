@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
 // ── Types ────────────────────────────────────────────────────────────
-type ModelId = "kimi-k2.5" | "gpt-oss-20b" | "llama-4-scout" | "gemini-3-pro";
+type ModelId = "kimi-k2.5" | "gpt-oss-120b" | "llama-4-scout" | "gemini-3-pro";
 type Theme = "light" | "dark" | "system";
 
 interface Settings {
@@ -52,8 +52,8 @@ const MODELS: { id: ModelId; label: string; icon: string; desc: string }[] = [
     desc: "Fast, good reasoning",
   },
   {
-    id: "gpt-oss-20b",
-    label: "GPT-OSS 20B",
+    id: "gpt-oss-120b",
+    label: "GPT-OSS 120B",
     icon: "⚡",
     desc: "Balanced speed & quality",
   },

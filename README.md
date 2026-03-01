@@ -26,7 +26,7 @@ AI-powered Chrome extension that can **see, understand, and interact** with any 
 | Frontend      | React 19, TypeScript, Vite                          |
 | Styling       | Vanilla CSS (Inter font, glassmorphism)             |
 | Backend       | Supabase Edge Functions (Deno)                      |
-| AI Models     | NVIDIA API (Kimi K2.5), Groq API (GPT-OSS-20B)     |
+| AI Models     | NVIDIA API (Kimi K2.5), Groq API (GPT-OSS-120B)     |
 | Extension     | Chrome Manifest V3, Side Panel API                  |
 | Automation    | Content Scripts, Chrome DevTools Protocol (CDP)     |
 | Safety        | Policy engine with blocklists + risk escalation     |

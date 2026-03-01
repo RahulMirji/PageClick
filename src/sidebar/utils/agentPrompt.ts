@@ -43,14 +43,16 @@ function buildPageContext(snapshot: PageSnapshot | null): string {
   // Flow / form position awareness
   if (snapshot.formContext) {
     const fc = snapshot.formContext;
+    const remaining = Math.max(0, fc.totalFields - fc.filledFields);
     parts.push(`FLOW POSITION:`);
     if (fc.stepIndicator) parts.push(`  - Step indicator: "${fc.stepIndicator}"`);
     if (fc.activeStep) parts.push(`  - Active step/tab: "${fc.activeStep}"`);
     if (fc.progressPercent !== undefined) parts.push(`  - Progress: ${fc.progressPercent}%`);
     if (fc.totalFields > 0) {
       parts.push(`  - Form fields: ${fc.filledFields}/${fc.totalFields} filled`);
+      parts.push(`  - Remaining visible fields: ${remaining}`);
       if (fc.unfilledFields.length > 0) {
-        parts.push(`  - Unfilled fields: ${fc.unfilledFields.join(", ")}`);
+        parts.push(`  - Empty fields (prioritize these): ${fc.unfilledFields.join(", ")}`);
       }
     }
   }
@@ -180,7 +182,7 @@ ${FORMATTING_RULES}
 YOUR JOB RIGHT NOW: Generate a CONCISE PLAN (1-2 sentences) of what you will do to accomplish the user's goal. The user will see your plan and can either PROCEED or CANCEL.
 
 YOUR CAPABILITIES:
-- You can click, type, scroll, navigate, extract data, run JS eval, download files, and ORGANIZE BROWSER TABS INTO GROUPS.
+- You can click, type, select dropdowns, set date fields, scroll, navigate, extract data, run JS eval, download files, and ORGANIZE BROWSER TABS INTO GROUPS.
 - For tab management: you can create named color-coded tab groups, add tabs to existing groups, and list all current groups. You do this using the "tabgroup" action — you DO have direct access to the Chrome Tab Groups API.
 - You can call approved local native operations through a secure bridge using the "native" action.
 
@@ -211,6 +213,20 @@ export function buildExecutionPrompt(
   const clarifications = orchestrator.buildClarificationContext();
   const cdpContext = buildCDPContext(cdp);
   const projectContext = buildProjectContext(project);
+  const lastFailure = orchestrator.getLastFailure();
+  const stuckGuidance = orchestrator.isStuck()
+    ? `\nSTUCK SIGNAL:
+- You have been on the same page with no form-progress change for multiple loops.
+- Your next action should be recovery-oriented: scroll, reveal hidden controls, or click Next/Continue.`
+    : "";
+  const failureGuidance = lastFailure
+    ? `\n⚠️ LAST ACTION FAILED:
+- Action: ${lastFailure.action}
+- Selector: ${lastFailure.selector || "(none)"}
+- Error: ${lastFailure.error || "Unknown failure"}
+- Do NOT retry the same selector. Pick a different element from Interactive Elements.
+- If target may be off-screen, use scroll first before retrying.`
+    : "";
 
   return `You are PageClick AI, an autonomous browser automation agent. You are in the EXECUTION phase — you must generate the NEXT SINGLE ACTION to take.
 
@@ -219,6 +235,8 @@ TASK GOAL: "${state.goal}"
 ${clarifications}
 
 ${historySummary}
+${stuckGuidance}
+${failureGuidance}
 
 ${buildPageContext(snapshot)}
 ${cdpContext ? "\n" + cdpContext : ""}
@@ -236,6 +254,7 @@ INSTRUCTIONS:
 5. Use CSS selectors from the Interactive Elements list above when selecting elements.
 6. If the page hasn't loaded expected content, use scroll to reveal more content.
 7. If you need to navigate to a new page, use the navigate tool.
+7.1. For date inputs/calendars, prefer select_date with YYYY-MM-DD instead of generic input.
 8. Pay attention to FLOW POSITION — if a form shows "Step 2 of 5" with unfilled fields, fill those fields BEFORE clicking Next.
 9. If a loading indicator is detected, use scroll or wait before taking action — the page may not be ready.
 10. Check element values/states (aria-expanded, aria-selected, value) to understand what's already done.

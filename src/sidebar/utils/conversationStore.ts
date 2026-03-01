@@ -115,6 +115,7 @@ interface MessageMeta {
   text?: string;
   tokenCount?: number;
   planConfirm?: { summary: string; status: string };
+  resumeTask?: { summary: string; status: string };
   taskProgress?: {
     explanation: string;
     steps: Array<{ description: string; status: string }>;
@@ -134,6 +135,13 @@ export function encodeMessageContent(msg: Message): string {
     meta.planConfirm = {
       summary: msg.planConfirm.summary,
       status: msg.planConfirm.status,
+    };
+    hasExtra = true;
+  }
+  if (msg.resumeTask) {
+    meta.resumeTask = {
+      summary: msg.resumeTask.summary,
+      status: msg.resumeTask.status,
     };
     hasExtra = true;
   }
@@ -177,6 +185,16 @@ function decodeMessageContent(
         status: meta.planConfirm.status as "approved" | "rejected" | "pending",
         onProceed: () => {},
         onReject: () => {},
+      };
+    }
+    if (meta.resumeTask) {
+      msg.resumeTask = {
+        summary: meta.resumeTask.summary,
+        status:
+          meta.resumeTask.status === "pending"
+            ? "resumed"
+            : (meta.resumeTask.status as "pending" | "resumed"),
+        onResume: () => {},
       };
     }
     if (meta.taskProgress) {

@@ -12,9 +12,9 @@ const OPENAI_COMPAT_MODELS: Record<
     model: "moonshotai/kimi-k2.5",
     apiKeyEnv: "KIMI_API_KEY",
   },
-  "gpt-oss-20b": {
+  "gpt-oss-120b": {
     apiUrl: "https://api.groq.com/openai/v1/chat/completions",
-    model: "openai/gpt-oss-20b",
+    model: "openai/gpt-oss-120b",
     apiKeyEnv: "GROQ_API_KEY",
   },
   "llama-4-scout": {
@@ -307,6 +307,40 @@ async function callGeminiToolCall(
 }
 
 /**
+ * Strips OpenAI Strict Mode fields (`strict`, `additionalProperties`) from
+ * tool schemas. Groq and NVIDIA don't support these and reject them with
+ * "invalid json schema" errors.
+ */
+function sanitizeToolsForOpenAI(tools: any[]): any[] {
+  return tools.map((tool: any) => {
+    const fn = { ...tool.function };
+    delete fn.strict;
+    if (fn.parameters) {
+      fn.parameters = stripAdditionalProperties(fn.parameters);
+    }
+    return { ...tool, function: fn };
+  });
+}
+
+function stripAdditionalProperties(schema: any): any {
+  if (!schema || typeof schema !== "object") return schema;
+  const result = { ...schema };
+  delete result.additionalProperties;
+  if (result.properties) {
+    result.properties = Object.fromEntries(
+      Object.entries(result.properties).map(([k, v]: [string, any]) => [
+        k,
+        stripAdditionalProperties(v),
+      ]),
+    );
+  }
+  if (result.items) {
+    result.items = stripAdditionalProperties(result.items);
+  }
+  return result;
+}
+
+/**
  * Calls an OpenAI-compatible endpoint (Groq / NVIDIA) with tools array.
  * Non-streaming — returns the complete message object.
  */
@@ -319,6 +353,7 @@ async function callOpenAIToolCall(
 ): Promise<any> {
   const MAX_RETRIES = 3;
   let lastError = "";
+  const cleanTools = sanitizeToolsForOpenAI(tools);
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     if (attempt > 0) {
@@ -336,7 +371,7 @@ async function callOpenAIToolCall(
         body: JSON.stringify({
           model,
           messages,
-          tools,
+          tools: cleanTools,
           tool_choice: "auto",
           stream: false,
           temperature: 0.1, // Low temp for deterministic action selection

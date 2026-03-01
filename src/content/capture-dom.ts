@@ -12,6 +12,8 @@ import type {
   DOMNode,
   PageSnapshot,
   CapturePageResponse,
+  PageObservation,
+  CaptureObservationResponse,
 } from "../shared/messages";
 import { executeAction } from "./action-executor";
 
@@ -94,7 +96,15 @@ function buildSelector(el: Element): string {
 
 // ── Visibility check ──────────────────────────────────────────────
 
-function isVisible(el: Element): boolean {
+function isInViewport(el: Element): boolean {
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return false;
+  if (rect.bottom < 0 || rect.top > window.innerHeight) return false;
+  if (rect.right < 0 || rect.left > window.innerWidth) return false;
+  return true;
+}
+
+function hasRenderableStyle(el: Element): boolean {
   const style = window.getComputedStyle(el);
   if (
     style.display === "none" ||
@@ -104,11 +114,13 @@ function isVisible(el: Element): boolean {
     return false;
   }
   const rect = el.getBoundingClientRect();
-  // Must have nonzero dimensions and be at least partially in viewport
+  // Must have nonzero dimensions.
   if (rect.width === 0 || rect.height === 0) return false;
-  if (rect.bottom < 0 || rect.top > window.innerHeight) return false;
-  if (rect.right < 0 || rect.left > window.innerWidth) return false;
   return true;
+}
+
+function isVisible(el: Element): boolean {
+  return hasRenderableStyle(el) && isInViewport(el);
 }
 
 // ── Tags we care about for structured capture ─────────────────────
@@ -183,130 +195,175 @@ function shouldCapture(el: Element): boolean {
 const MAX_NODES = 800;
 const MAX_TEXT_LENGTH = 120;
 
+function toDOMNode(el: Element, id: number): DOMNode {
+  const tag = el.tagName.toLowerCase();
+  const rect = el.getBoundingClientRect();
+
+  // Build attributes — only useful ones
+  const attrs: Record<string, string> = {};
+  const role = el.getAttribute("role");
+  if (role) attrs.role = role;
+  const ariaLabel = el.getAttribute("aria-label");
+  if (ariaLabel) attrs["aria-label"] = ariaLabel;
+  const testId = el.getAttribute("data-testid");
+  if (testId) attrs["data-testid"] = testId;
+  const href = el.getAttribute("href");
+  if (href) attrs.href = href;
+  const type = el.getAttribute("type");
+  if (type) attrs.type = type;
+  const placeholder = el.getAttribute("placeholder");
+  if (placeholder) attrs.placeholder = placeholder;
+  const name = el.getAttribute("name");
+  if (name) attrs.name = name;
+  const disabled = el.getAttribute("disabled");
+  if (disabled !== null) attrs.disabled = "true";
+
+  // Handle inputs: metadata only (never send values), redact sensitive ones
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    if (isSensitiveElement(el)) {
+      attrs._redacted = "true";
+    } else {
+      attrs.type = (el as HTMLInputElement).type || "text";
+      if (
+        el instanceof HTMLInputElement &&
+        (el.type === "radio" || el.type === "checkbox")
+      ) {
+        attrs.checked = el.checked ? "true" : "false";
+      }
+      if (
+        el instanceof HTMLInputElement &&
+        !["password", "hidden"].includes(el.type) &&
+        el.value
+      ) {
+        attrs.value = el.value.substring(0, 100);
+      }
+      if (el instanceof HTMLTextAreaElement && el.value) {
+        attrs.value = el.value.substring(0, 100);
+      }
+    }
+  }
+
+  // Handle select elements: include current value and options
+  if (el instanceof HTMLSelectElement) {
+    const selectedOpt = el.options[el.selectedIndex];
+    if (selectedOpt) attrs.value = selectedOpt.text.substring(0, 80);
+    const optTexts = Array.from(el.options)
+      .slice(0, 10)
+      .map((o) => o.text.trim());
+    attrs.options = optTexts.join(" | ");
+  }
+
+  // Include ARIA state attributes for complex UIs (GCP, wizards, etc.)
+  const ariaChecked = el.getAttribute("aria-checked");
+  if (ariaChecked) attrs["aria-checked"] = ariaChecked;
+  const ariaExpanded = el.getAttribute("aria-expanded");
+  if (ariaExpanded) attrs["aria-expanded"] = ariaExpanded;
+  const ariaSelected = el.getAttribute("aria-selected");
+  if (ariaSelected) attrs["aria-selected"] = ariaSelected;
+  const ariaCurrent = el.getAttribute("aria-current");
+  if (ariaCurrent) attrs["aria-current"] = ariaCurrent;
+
+  // Get visible text (truncated)
+  let text = "";
+  if (tag === "input" || tag === "textarea") {
+    text = placeholder || "";
+  } else if (tag === "img") {
+    text = el.getAttribute("alt") || "";
+  } else {
+    text = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (text.length > MAX_TEXT_LENGTH) {
+      text = text.substring(0, MAX_TEXT_LENGTH) + "…";
+    }
+  }
+
+  return {
+    id,
+    tag,
+    text,
+    attrs,
+    bbox: {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    },
+    path: buildSelector(el),
+  };
+}
+
 function captureDOM(): DOMNode[] {
+  if (!document.body) return [];
+
   const nodes: DOMNode[] = [];
   let nodeId = 0;
+
+  const forcedFormEls: Element[] = [];
+  const forcedSet = new Set<Element>();
+  const addForced = (el: Element) => {
+    if (forcedSet.has(el)) return;
+    forcedSet.add(el);
+    forcedFormEls.push(el);
+  };
+
+  // Form fast-track: if a form is visible, capture the full form structure first.
+  const visibleForms = Array.from(document.querySelectorAll("form")).filter(
+    (f) => isVisible(f),
+  );
+  for (const form of visibleForms) {
+    addForced(form);
+    form
+      .querySelectorAll(
+        "input, select, textarea, button, label, option, a, details, summary, [role], [aria-label], [data-testid]",
+      )
+      .forEach((el) => {
+        if (!hasRenderableStyle(el)) return;
+        if (!shouldCapture(el)) return;
+        addForced(el);
+      });
+  }
+
+  const viewportEls: Element[] = [];
+  const offscreenEls: Element[] = [];
+  const scanSeen = new Set<Element>();
 
   const walker = document.createTreeWalker(
     document.body,
     NodeFilter.SHOW_ELEMENT,
-    {
-      acceptNode(node) {
-        const el = node as Element;
-        // Skip PageClick's own injected elements
-        if (el.id?.startsWith("__pc-")) return NodeFilter.FILTER_REJECT;
-        // Skip invisible
-        if (!isVisible(el)) return NodeFilter.FILTER_SKIP;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    },
   );
 
-  let el: Element | null = walker.currentNode as Element;
-  while (el && nodes.length < MAX_NODES) {
-    if (shouldCapture(el)) {
-      const tag = el.tagName.toLowerCase();
-      const rect = el.getBoundingClientRect();
-
-      // Build attributes — only useful ones
-      const attrs: Record<string, string> = {};
-      const role = el.getAttribute("role");
-      if (role) attrs.role = role;
-      const ariaLabel = el.getAttribute("aria-label");
-      if (ariaLabel) attrs["aria-label"] = ariaLabel;
-      const testId = el.getAttribute("data-testid");
-      if (testId) attrs["data-testid"] = testId;
-      const href = el.getAttribute("href");
-      if (href) attrs.href = href;
-      const type = el.getAttribute("type");
-      if (type) attrs.type = type;
-      const placeholder = el.getAttribute("placeholder");
-      if (placeholder) attrs.placeholder = placeholder;
-      const name = el.getAttribute("name");
-      if (name) attrs.name = name;
-      const disabled = el.getAttribute("disabled");
-      if (disabled !== null) attrs.disabled = "true";
-
-      // Handle inputs: metadata only (never send values), redact sensitive ones
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        if (isSensitiveElement(el)) {
-          attrs._redacted = "true";
-        } else {
-          // Send type + placeholder but NOT the value
-          attrs.type = (el as HTMLInputElement).type || "text";
-          // Include checked state for radio/checkbox
-          if (
-            el instanceof HTMLInputElement &&
-            (el.type === "radio" || el.type === "checkbox")
-          ) {
-            attrs.checked = el.checked ? "true" : "false";
-          }
-          // Include current value for text fields so AI knows what's already filled
-          if (
-            el instanceof HTMLInputElement &&
-            !["password", "hidden"].includes(el.type) &&
-            el.value
-          ) {
-            attrs.value = el.value.substring(0, 100);
-          }
-          if (el instanceof HTMLTextAreaElement && el.value) {
-            attrs.value = el.value.substring(0, 100);
-          }
-        }
-      }
-
-      // Handle select elements: include current value and options
-      if (el instanceof HTMLSelectElement) {
-        const selectedOpt = el.options[el.selectedIndex];
-        if (selectedOpt) attrs.value = selectedOpt.text.substring(0, 80);
-        // Include available options (up to 10)
-        const optTexts = Array.from(el.options)
-          .slice(0, 10)
-          .map((o) => o.text.trim());
-        attrs.options = optTexts.join(" | ");
-      }
-
-      // Include ARIA state attributes for complex UIs (GCP, wizards, etc.)
-      const ariaChecked = el.getAttribute("aria-checked");
-      if (ariaChecked) attrs["aria-checked"] = ariaChecked;
-      const ariaExpanded = el.getAttribute("aria-expanded");
-      if (ariaExpanded) attrs["aria-expanded"] = ariaExpanded;
-      const ariaSelected = el.getAttribute("aria-selected");
-      if (ariaSelected) attrs["aria-selected"] = ariaSelected;
-      const ariaCurrent = el.getAttribute("aria-current");
-      if (ariaCurrent) attrs["aria-current"] = ariaCurrent;
-
-      // Get visible text (truncated)
-      let text = "";
-      if (tag === "input" || tag === "textarea") {
-        text = placeholder || "";
-      } else if (tag === "img") {
-        text = el.getAttribute("alt") || "";
+  let current: Element | null = walker.currentNode as Element;
+  while (current) {
+    if (
+      !scanSeen.has(current) &&
+      !current.id?.startsWith("__pc-") &&
+      hasRenderableStyle(current) &&
+      shouldCapture(current)
+    ) {
+      scanSeen.add(current);
+      if (isInViewport(current)) {
+        viewportEls.push(current);
       } else {
-        text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (text.length > MAX_TEXT_LENGTH) {
-          text = text.substring(0, MAX_TEXT_LENGTH) + "…";
-        }
+        offscreenEls.push(current);
       }
-
-      nodes.push({
-        id: nodeId++,
-        tag,
-        text,
-        attrs,
-        bbox: {
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-        },
-        path: buildSelector(el),
-      });
     }
-
     const next = walker.nextNode();
     if (!next) break;
-    el = next as Element;
+    current = next as Element;
+  }
+
+  const byY = (a: Element, b: Element) =>
+    a.getBoundingClientRect().y - b.getBoundingClientRect().y;
+  viewportEls.sort(byY);
+  offscreenEls.sort(byY);
+
+  const ordered = [...forcedFormEls, ...viewportEls, ...offscreenEls];
+  const emitted = new Set<Element>();
+
+  for (const el of ordered) {
+    if (emitted.has(el)) continue;
+    if (nodes.length >= MAX_NODES && !forcedSet.has(el)) continue;
+    emitted.add(el);
+    nodes.push(toDOMNode(el, nodeId++));
   }
 
   return nodes;
@@ -409,6 +466,82 @@ function hasLoadingIndicators(): boolean {
   return false;
 }
 
+// ── Lightweight post-action observation capture ───────────────────
+
+function captureObservation(): PageObservation {
+  const describeElement = (el: Element, fallback: string): string => {
+    const role = el.getAttribute("role");
+    const ariaLabel = el.getAttribute("aria-label");
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim().substring(0, 120);
+    if (ariaLabel) return `${fallback}: "${ariaLabel}"`;
+    if (text) return `${fallback}: "${text}"`;
+    if (role) return `${fallback}: [role=${role}]`;
+    return fallback;
+  };
+
+  const newElements: string[] = [];
+  const pushUnique = (value: string) => {
+    if (!value) return;
+    if (!newElements.includes(value)) newElements.push(value);
+  };
+
+  // Visible dialogs/modals/toasts/alerts only
+  document
+    .querySelectorAll('[role="dialog"], [role="alert"], .toast, .snackbar, [class*="toast"], [class*="snackbar"]')
+    .forEach((el) => {
+      if (!isVisible(el)) return;
+      const role = el.getAttribute("role");
+      if (role === "dialog") {
+        pushUnique(describeElement(el, "dialog"));
+      } else if (role === "alert") {
+        pushUnique(describeElement(el, "alert"));
+      } else {
+        pushUnique(describeElement(el, "toast"));
+      }
+    });
+
+  const errorMessages: string[] = [];
+  const pushError = (value: string) => {
+    if (!value) return;
+    if (!errorMessages.includes(value)) errorMessages.push(value);
+  };
+
+  document
+    .querySelectorAll('.error, [aria-invalid="true"], [role="alert"], [class*="error"]')
+    .forEach((el) => {
+      if (!isVisible(el)) return;
+      const text = (el.textContent || "").replace(/\s+/g, " ").trim().substring(0, 160);
+      if (text) pushError(text);
+    });
+
+  const formContext = detectFormContext();
+  let formProgress: string | undefined;
+  let stepIndicator: string | undefined;
+  let activeStep: string | undefined;
+  let filledFields: number | undefined;
+  let totalFields: number | undefined;
+  if (formContext && formContext.totalFields > 0) {
+    formProgress = `${formContext.filledFields}/${formContext.totalFields} fields filled`;
+    stepIndicator = formContext.stepIndicator;
+    activeStep = formContext.activeStep;
+    filledFields = formContext.filledFields;
+    totalFields = formContext.totalFields;
+  }
+
+  return {
+    url: window.location.href,
+    title: document.title || "",
+    newElements: newElements.slice(0, 6),
+    errorMessages: errorMessages.slice(0, 6),
+    formProgress,
+    stepIndicator,
+    activeStep,
+    filledFields,
+    totalFields,
+    capturedAt: Date.now(),
+  };
+}
+
 // ── Build full snapshot ───────────────────────────────────────────
 
 function buildSnapshot(): PageSnapshot {
@@ -418,15 +551,6 @@ function buildSnapshot(): PageSnapshot {
       ?.getAttribute("content") || "";
 
   const nodes = captureDOM();
-  
-  // Sort nodes: viewport-visible first (by Y position), then off-screen
-  nodes.sort((a, b) => {
-    const aVisible = a.bbox.y >= 0 && a.bbox.y < window.innerHeight;
-    const bVisible = b.bbox.y >= 0 && b.bbox.y < window.innerHeight;
-    if (aVisible && !bVisible) return -1;
-    if (!aVisible && bVisible) return 1;
-    return a.bbox.y - b.bbox.y;
-  });
 
   return {
     url: window.location.href,
@@ -461,6 +585,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse(response);
     }
     return true; // keep channel open for async response
+  }
+
+  if (message.type === "CAPTURE_OBSERVATION") {
+    try {
+      const observation = captureObservation();
+      const response: CaptureObservationResponse = {
+        type: "CAPTURE_OBSERVATION_RESULT",
+        payload: observation,
+      };
+      sendResponse(response);
+    } catch (err: any) {
+      const response: CaptureObservationResponse = {
+        type: "CAPTURE_OBSERVATION_RESULT",
+        payload: null,
+        error: err.message || "Observation capture failed",
+      };
+      sendResponse(response);
+    }
+    return true;
   }
 
   if (message.type === "EXECUTE_ACTION") {

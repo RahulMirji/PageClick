@@ -16,6 +16,30 @@ export interface CapturePageResponse {
   error?: string;
 }
 
+export interface CaptureObservationRequest {
+  type: "CAPTURE_OBSERVATION";
+  tabId?: number;
+}
+
+export interface PageObservation {
+  url: string;
+  title: string;
+  newElements: string[];
+  errorMessages: string[];
+  formProgress?: string;
+  stepIndicator?: string;
+  activeStep?: string;
+  filledFields?: number;
+  totalFields?: number;
+  capturedAt: number;
+}
+
+export interface CaptureObservationResponse {
+  type: "CAPTURE_OBSERVATION_RESULT";
+  payload: PageObservation | null;
+  error?: string;
+}
+
 export interface HighlightElementRequest {
   type: "HIGHLIGHT_ELEMENT";
   selector: string;
@@ -35,6 +59,8 @@ export interface ErrorMessage {
 export type ExtensionMessage =
   | CapturePageRequest
   | CapturePageResponse
+  | CaptureObservationRequest
+  | CaptureObservationResponse
   | HighlightElementRequest
   | ClearHighlightRequest
   | ExecuteActionRequest
@@ -46,6 +72,7 @@ export type ActionType =
   | "click"
   | "input"
   | "select"
+  | "select_date"
   | "scroll"
   | "extract"
   | "navigate"
@@ -59,6 +86,7 @@ export interface ActionStep {
   action: ActionType;
   selector: string;
   value?: string; // for input actions
+  clearFirst?: boolean; // for input actions, default true
   expect?: {
     textIncludes?: string;
     role?: string;

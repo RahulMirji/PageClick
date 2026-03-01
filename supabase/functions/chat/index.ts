@@ -12,9 +12,9 @@ const OPENAI_COMPAT_MODELS: Record<
     model: "moonshotai/kimi-k2.5",
     apiKeyEnv: "KIMI_API_KEY",
   },
-  "gpt-oss-20b": {
+  "gpt-oss-120b": {
     apiUrl: "https://api.groq.com/openai/v1/chat/completions",
-    model: "openai/gpt-oss-20b",
+    model: "openai/gpt-oss-120b",
     apiKeyEnv: "GROQ_API_KEY",
   },
   "llama-4-scout": {
