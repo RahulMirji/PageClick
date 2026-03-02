@@ -20,7 +20,10 @@ export const MAX_CONTEXT_TOKENS = 6000;
  */
 export function trimToContextWindow<
   T extends { role: string; content: string | unknown[] },
->(messages: T[]): { trimmed: T[]; dropped: number } {
+>(messages: T[], maxTokens: number = MAX_CONTEXT_TOKENS): {
+  trimmed: T[];
+  dropped: number;
+} {
   let total = 0;
   const result: T[] = [];
 
@@ -33,7 +36,7 @@ export function trimToContextWindow<
         : JSON.stringify(msg.content);
     const tokens = estimateTokens(text);
 
-    if (result.length > 0 && total + tokens > MAX_CONTEXT_TOKENS) {
+    if (result.length > 0 && total + tokens > maxTokens) {
       // Would overflow — stop here
       const dropped = i + 1;
       return { trimmed: result.reverse(), dropped };

@@ -27,6 +27,7 @@ interface ChatViewProps {
 }
 
 const MODEL_LABELS: Record<string, string> = {
+  "kimi-k2.5": "Kimi K2.5",
   "gemini-3-pro": "Gemini",
   "gpt-oss-120b": "GPT-OSS",
   "qwen3-32b": "Qwen3",

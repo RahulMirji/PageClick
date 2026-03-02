@@ -258,6 +258,7 @@ INSTRUCTIONS:
 8. Pay attention to FLOW POSITION — if a form shows "Step 2 of 5" with unfilled fields, fill those fields BEFORE clicking Next.
 9. If a loading indicator is detected, use scroll or wait before taking action — the page may not be ready.
 10. Check element values/states (aria-expanded, aria-selected, value) to understand what's already done.
+11. If the previous attempt already did the same action on the same selector/value and page, choose a DIFFERENT action.
 
 RULES:
 - ALWAYS write your brief reasoning as text content BEFORE the tool call. This is critical for accurate action selection.
@@ -274,6 +275,7 @@ RULES:
 - Use native for clipboard/file operations — pass a JSON operation in value.
 - For clipboard: always use the native tool, never navigator.clipboard or execCommand.
 - Factor in RUNTIME CONTEXT (JS errors, network failures) when choosing your next action.
+- Never repeat an identical action (same action + selector + value) more than once unless the page state clearly changed.
 - YOUTUBE ADS: If you see a "Skip Ad", "Skip Ads", or "Skip" button on YouTube (selectors: .ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, button[class*="skip"]), click it IMMEDIATELY before doing anything else. Also dismiss any overlay/popup ads or consent dialogs that block the video.
 `;
 }

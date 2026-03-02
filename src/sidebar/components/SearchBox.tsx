@@ -9,6 +9,7 @@ import {
 } from "react";
 
 export type ModelId =
+  | "kimi-k2.5"
   | "gpt-oss-120b"
   | "qwen3-32b"
   | "llama-4-scout"
@@ -24,6 +25,7 @@ interface ModelOption {
 }
 
 const MODELS: ModelOption[] = [
+  { id: "kimi-k2.5", label: "Kimi K2.5", icon: "🌙" },
   { id: "gemini-3-pro", label: "Gemini 3 Flash", icon: "💎" },
   { id: "gpt-oss-120b", label: "GPT-OSS", icon: "⚡" },
   { id: "qwen3-32b", label: "Qwen3 32B", icon: "🧠" },
@@ -89,6 +91,7 @@ function SearchBox({
     if (
       attachedImages.length > 0 &&
       selectedModel !== "llama-4-scout" &&
+      selectedModel !== "kimi-k2.5" &&
       selectedModel !== "gemini-3-pro"
     ) {
       onModelChange("gemini-3-pro");
@@ -129,6 +132,7 @@ function SearchBox({
       // Auto-switch to Gemini 3.1 Pro as soon as an image is attached
       if (
         selectedModel !== "llama-4-scout" &&
+        selectedModel !== "kimi-k2.5" &&
         selectedModel !== "gemini-3-pro"
       ) {
         onModelChange("gemini-3-pro");

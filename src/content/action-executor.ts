@@ -341,11 +341,15 @@ async function executeInputWithOptions(
   };
 }
 
-async function executeScroll(el: Element, value?: string): Promise<void> {
+async function executeScroll(
+  el: Element,
+  value?: string,
+): Promise<{ moved: boolean }> {
   const direction = value || "down";
   const amount = 300;
 
   if (el === document.documentElement || el === document.body) {
+    const before = Math.round(window.scrollY);
     // Scroll window
     switch (direction) {
       case "up":
@@ -364,10 +368,16 @@ async function executeScroll(el: Element, value?: string): Promise<void> {
         });
         break;
     }
+    await new Promise((r) => setTimeout(r, 400));
+    const after = Math.round(window.scrollY);
+    return { moved: after !== before };
   } else {
+    const beforeTop = Math.round(el.getBoundingClientRect().top);
     scrollIntoViewIfNeeded(el);
+    await new Promise((r) => setTimeout(r, 400));
+    const afterTop = Math.round(el.getBoundingClientRect().top);
+    return { moved: afterTop !== beforeTop };
   }
-  await new Promise((r) => setTimeout(r, 400));
 }
 
 async function executeExtract(el: Element): Promise<string> {
@@ -600,7 +610,16 @@ export async function executeAction(
           "color: #22d3ee",
           step.value || "down",
         );
-        await executeScroll(el, step.value);
+        const scrollResult = await executeScroll(el, step.value);
+        if (!scrollResult.moved) {
+          return {
+            success: false,
+            action: step.action,
+            selector: step.selector,
+            error: "Scroll had no effect (already at boundary or element position unchanged)",
+            durationMs: performance.now() - start,
+          };
+        }
         break;
 
       case "extract":

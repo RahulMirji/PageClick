@@ -611,6 +611,37 @@ async function handleNavigateAction(
       url = "https://" + url;
     }
 
+    const normalizeUrl = (raw?: string): string => {
+      if (!raw) return "";
+      try {
+        const u = new URL(raw);
+        const path = u.pathname.replace(/\/+$/, "") || "/";
+        const query = u.search || "";
+        return `${u.origin}${path}${query}`;
+      } catch {
+        return raw;
+      }
+    };
+
+    const currentUrl = tab.url || "";
+    const currentNorm = normalizeUrl(currentUrl);
+    const targetNorm = normalizeUrl(url);
+
+    // Guard against no-op navigate loops (same target URL repeatedly).
+    if (currentNorm && targetNorm && currentNorm === targetNorm) {
+      sendResponse({
+        type: "EXECUTE_ACTION_RESULT",
+        result: {
+          success: false,
+          action: "navigate",
+          selector: step.selector || "",
+          error: `Navigation skipped: already on target URL (${targetNorm})`,
+          durationMs: Date.now() - start,
+        },
+      });
+      return;
+    }
+
     console.log(
       "%c[PageClick:BG] Navigating tab",
       "color: #60a5fa; font-weight: bold",

@@ -27,6 +27,11 @@ const OPENAI_COMPAT_MODELS: Record<
     model: "meta-llama/llama-3.3-70b-instruct",
     apiKeyEnv: "OPEN_ROUTER_KEY",
   },
+  "kimi-k2.5": {
+    apiUrl: "https://api.blackbox.ai/v1/chat/completions",
+    model: "blackboxai/moonshotai/kimi-k2.5",
+    apiKeyEnv: "BLACKBOX_API_KEY",
+  },
 };
 
 /** Gemini model configuration */
@@ -368,6 +373,43 @@ function stripAdditionalProperties(schema: any): any {
   return result;
 }
 
+function stripDescriptions(schema: any): any {
+  if (!schema || typeof schema !== "object") return schema;
+  const result = { ...schema };
+  delete result.description;
+  if (result.properties) {
+    result.properties = Object.fromEntries(
+      Object.entries(result.properties).map(([k, v]: [string, any]) => [
+        k,
+        stripDescriptions(v),
+      ]),
+    );
+  }
+  if (result.items) {
+    result.items = stripDescriptions(result.items);
+  }
+  return result;
+}
+
+function isKimiModel(model: string): boolean {
+  return model.includes("kimi-k2.5");
+}
+
+function optimizeToolsForModel(tools: any[], model: string): any[] {
+  const cleanTools = sanitizeToolsForOpenAI(tools);
+  if (!isKimiModel(model)) return cleanTools;
+
+  // Kimi is faster/cheaper with compact schemas; keep function descriptions,
+  // but strip nested parameter descriptions to reduce prompt token load.
+  return cleanTools.map((tool: any) => {
+    const fn = { ...tool.function };
+    if (fn.parameters) {
+      fn.parameters = stripDescriptions(fn.parameters);
+    }
+    return { ...tool, function: fn };
+  });
+}
+
 /** Build auth headers, adding OpenRouter-specific ones when needed. */
 function buildAuthHeaders(apiUrl: string, apiKey: string): Record<string, string> {
   const headers: Record<string, string> = {
@@ -394,7 +436,8 @@ async function callOpenAIToolCall(
 ): Promise<any> {
   const MAX_RETRIES = 3;
   let lastError = "";
-  const cleanTools = sanitizeToolsForOpenAI(tools);
+  const optimizedTools = optimizeToolsForModel(tools, model);
+  const kimi = isKimiModel(model);
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     if (attempt > 0) {
@@ -409,11 +452,12 @@ async function callOpenAIToolCall(
         body: JSON.stringify({
           model,
           messages,
-          tools: cleanTools,
+          tools: optimizedTools,
           tool_choice: "required",
           stream: false,
-          temperature: 0.1, // Low temp for deterministic action selection
-          max_tokens: 1024,  // Actions are small payloads
+          temperature: kimi ? 0 : 0.1,
+          // Tool calls are small payloads; Kimi is faster with a tighter limit.
+          max_tokens: kimi ? 512 : 1024,
         }),
       });
 

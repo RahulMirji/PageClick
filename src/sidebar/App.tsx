@@ -53,6 +53,9 @@ import { matchProject, type Project } from "./utils/projectStore";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+const KIMI_TOOL_CONTEXT_TOKENS = 3200;
+const KIMI_TOOL_HISTORY_MESSAGES = 8;
+const LOOP_GUARD_MAX_IDENTICAL_STEP_REPEATS = 3;
 
 /**
  * Remove all <<<TAG>>>...<<<END_TAG>>> structured blocks from a message.
@@ -68,6 +71,23 @@ function stripStructuredBlocks(text: string): string {
 function extractQuotedText(input: string): string | null {
   const match = input.match(/["']([^"']+)["']/);
   return match?.[1]?.trim() || null;
+}
+
+function normalizeComparableUrl(raw?: string): string {
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    const path = u.pathname.replace(/\/+$/, "") || "/";
+    return `${u.origin}${path}${u.search || ""}`;
+  } catch {
+    return raw.trim();
+  }
+}
+
+function actionSignature(step: ActionStep): string {
+  const selector = (step.selector || "").trim().toLowerCase();
+  const value = (step.value || "").trim().toLowerCase();
+  return `${step.action}|${selector}|${value}`;
 }
 
 /** Turn raw API error strings into human-friendly messages. */
@@ -378,21 +398,28 @@ function App() {
           : m.content,
     }));
 
-    const { trimmed, dropped } = trimToContextWindow(rawMessages);
+    const isGemini = selectedModel === "gemini-3-pro";
+    const isKimi = selectedModel === "kimi-k2.5";
+    const { trimmed, dropped } = isKimi
+      ? trimToContextWindow(rawMessages, KIMI_TOOL_CONTEXT_TOKENS)
+      : trimToContextWindow(rawMessages);
     if (dropped > 0) {
       console.info(`[PageClick] Context trimmed: dropped ${dropped} oldest messages.`);
     }
 
     // Inject tool-call history (assistant+tool pairs) so the model remembers
     // what it called and what happened — without this it "forgets" between turns.
+    const recentToolHistory = isKimi
+      ? toolHistoryRef.current.slice(-KIMI_TOOL_HISTORY_MESSAGES)
+      : toolHistoryRef.current;
+
     const apiMessages = [
       { role: "system", content: systemPrompt },
       ...trimmed,
-      ...toolHistoryRef.current,
+      ...recentToolHistory,
     ];
 
     // Build tool schema — Gemini needs functionDeclarations format, others use tools[]
-    const isGemini = selectedModel === "gemini-3-pro";
     const toolPayload = isGemini ? toGeminiTools(tools) : tools;
 
     console.log(`[Agent] callToolTurn: fetching edge function (${apiMessages.length} API messages)...`);
@@ -944,6 +971,53 @@ function App() {
               const globalIndex = newStepsStart + si;
               accumulatedProgressRef.current.steps[globalIndex].status = "running";
               updateProgress(accumulatedProgressRef.current);
+
+              // Loop guard: block repeated identical actions on the same URL.
+              const candidateSig = actionSignature(step);
+              const currentComparableUrl = normalizeComparableUrl(
+                loopSnapshot?.url || pageUrlRef.current,
+              );
+              let sameStepOnSameUrlCount = 0;
+              const history = orchestrator.getState().history;
+              for (let hi = history.length - 1; hi >= 0; hi--) {
+                const entry = history[hi];
+                const entryUrl = normalizeComparableUrl(
+                  entry.flowState?.url || entry.pageUrl,
+                );
+                if (!currentComparableUrl || entryUrl !== currentComparableUrl) {
+                  break;
+                }
+                const firstAction = entry.plan.actions[0];
+                if (!firstAction || actionSignature(firstAction) !== candidateSig) {
+                  break;
+                }
+                const hadFailure = entry.results.some((r) => !r.success);
+                if (hadFailure) {
+                  break;
+                }
+                sameStepOnSameUrlCount++;
+              }
+
+              if (
+                sameStepOnSameUrlCount >=
+                LOOP_GUARD_MAX_IDENTICAL_STEP_REPEATS
+              ) {
+                const loopError =
+                  `Loop guard blocked repeated action: "${step.action}" with the same selector/value on the same page ${sameStepOnSameUrlCount} times. Try a different element or a different action.`;
+                console.warn(`[Agent] ${loopError}`);
+                const blockedResult = {
+                  success: false,
+                  action: step.action,
+                  selector: step.selector,
+                  error: loopError,
+                  durationMs: 0,
+                };
+                orchestrator.recordStepResult(blockedResult);
+                results.push(blockedResult);
+                accumulatedProgressRef.current.steps[globalIndex].status = "failed";
+                updateProgress(accumulatedProgressRef.current);
+                break;
+              }
 
               const stepT0 = performance.now();
               console.log(`[Agent] Executing step ${si + 1}/${plan.actions.length}: ${step.action} selector="${step.selector?.slice(0, 40) || ''}" value="${step.value?.slice(0, 40) || ''}"`);

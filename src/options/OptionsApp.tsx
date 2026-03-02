@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
 // ── Types ────────────────────────────────────────────────────────────
-type ModelId = "gpt-oss-120b" | "qwen3-32b" | "llama-4-scout" | "llama-3.3-70b" | "gemini-3-pro";
+type ModelId = "kimi-k2.5" | "gpt-oss-120b" | "qwen3-32b" | "llama-4-scout" | "llama-3.3-70b" | "gemini-3-pro";
 type Theme = "light" | "dark" | "system";
 
 interface Settings {
@@ -39,6 +39,12 @@ async function clearAllHistory(): Promise<void> {
 // ── Component ────────────────────────────────────────────────────────
 
 const MODELS: { id: ModelId; label: string; icon: string; desc: string }[] = [
+  {
+    id: "kimi-k2.5",
+    label: "Kimi K2.5",
+    icon: "🌙",
+    desc: "High-quality general assistant",
+  },
   {
     id: "gemini-3-pro",
     label: "Gemini 3 Pro",
