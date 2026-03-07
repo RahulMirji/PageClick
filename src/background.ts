@@ -3,7 +3,7 @@
 // ── Notification click handler (registered once at module level) ───
 chrome.notifications.onClicked.addListener((_notificationId) => {
   chrome.windows.getCurrent((win) => {
-    chrome.sidePanel.open({ windowId: win.id! }).catch(() => {});
+    chrome.sidePanel.open({ windowId: win.id! }).catch(() => { });
   });
 });
 
@@ -297,12 +297,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const snapshot = tabId
         ? cdpManager.getSnapshot(tabId)
         : {
-            attached: false,
-            networkLog: [],
-            consoleLog: [],
-            jsErrors: [],
-            capturedAt: Date.now(),
-          };
+          attached: false,
+          networkLog: [],
+          consoleLog: [],
+          jsErrors: [],
+          capturedAt: Date.now(),
+        };
       sendResponse({ type: "CDP_SNAPSHOT_RESULT", snapshot });
     });
     return true;
@@ -318,6 +318,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       const result = await cdpManager.evalJs(tabId, message.expression);
       sendResponse({ type: "EVAL_JS_RESULT", ...result });
+    });
+    return true;
+  }
+
+  // CDP_TYPE — insert text via CDP Input.insertText (for canvas-based editors)
+  if (message.type === "CDP_TYPE") {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      const tabId = tabs[0]?.id;
+      if (!tabId) {
+        sendResponse({ ok: false, error: "No active tab" });
+        return;
+      }
+      const result = await cdpManager.insertText(tabId, message.text);
+      sendResponse({ type: "CDP_TYPE_RESULT", ...result });
+    });
+    return true;
+  }
+
+  // CDP_KEY — dispatch a key press via CDP Input.dispatchKeyEvent
+  if (message.type === "CDP_KEY") {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      const tabId = tabs[0]?.id;
+      if (!tabId) {
+        sendResponse({ ok: false, error: "No active tab" });
+        return;
+      }
+      const result = await cdpManager.dispatchKey(tabId, message.key);
+      sendResponse({ type: "CDP_KEY_RESULT", ...result });
     });
     return true;
   }
@@ -763,5 +791,5 @@ async function handleWaitForPageLoad(
 
 // ── CDP cleanup: detach when tab is closed ─────────────────────────
 chrome.tabs.onRemoved.addListener((tabId) => {
-  cdpManager.detach(tabId).catch(() => {});
+  cdpManager.detach(tabId).catch(() => { });
 });

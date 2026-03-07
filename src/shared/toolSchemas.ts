@@ -342,6 +342,31 @@ const tabgroupTool: OpenAITool = {
     },
 };
 
+const pressKeyTool: OpenAITool = {
+    type: "function",
+    function: {
+        name: "press_key",
+        description:
+            "Press a keyboard key on a focused element. Use this to press Enter to submit search forms, Escape to close dialogs, Tab to move focus, or arrow keys for navigation. The selector indicates which element should receive the key event. The value is the key name (Enter, Escape, Tab, ArrowDown, ArrowUp, Backspace, Space, etc.).",
+        strict: true,
+        parameters: {
+            type: "object",
+            properties: {
+                selector: selectorParam,
+                value: {
+                    type: "string",
+                    description: "The key to press (e.g., 'Enter', 'Escape', 'Tab', 'ArrowDown', 'ArrowUp', 'Backspace', 'Space')",
+                },
+                confidence: confidenceParam,
+                risk: riskParam,
+                description: descriptionParam,
+            },
+            required: ["selector", "value", "confidence", "risk", "description"],
+            additionalProperties: false,
+        },
+    },
+};
+
 const nativeTool: OpenAITool = {
     type: "function",
     function: {
@@ -472,6 +497,7 @@ export const PAGECLICK_TOOLS: OpenAITool[] = [
     downloadTool,
     tabgroupTool,
     nativeTool,
+    pressKeyTool,
     // Control tools (signal state changes)
     taskCompleteTool,
     checkpointTool,

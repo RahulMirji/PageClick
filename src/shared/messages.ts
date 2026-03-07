@@ -79,7 +79,8 @@ export type ActionType =
   | "eval"
   | "download"
   | "tabgroup"
-  | "native";
+  | "native"
+  | "press_key";
 export type RiskLevel = "low" | "medium" | "high";
 
 export interface ActionStep {

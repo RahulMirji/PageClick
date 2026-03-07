@@ -7,6 +7,40 @@
 
 import type { ActionStep } from "../shared/messages";
 
+// ── CDP fallback helpers (for canvas-based editors like Google Docs) ──
+
+/** Send text via CDP Input.insertText through the background service worker. */
+async function cdpInsertText(text: string): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: "CDP_TYPE", text },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response || { ok: false, error: "No response from background" });
+        }
+      },
+    );
+  });
+}
+
+/** Dispatch a key press via CDP Input.dispatchKeyEvent through the background. */
+async function cdpDispatchKey(key: string): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: "CDP_KEY", key },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response || { ok: false, error: "No response from background" });
+        }
+      },
+    );
+  });
+}
+
 // ── Types ─────────────────────────────────────────────────────────
 
 export interface ExecutionResult {
@@ -15,6 +49,14 @@ export interface ExecutionResult {
   selector: string;
   extractedData?: string;
   error?: string;
+  observation?: {
+    url: string;
+    title: string;
+    elementFound: boolean;
+    elementVisible: boolean;
+    elementTag?: string;
+    newUrl?: string;
+  };
   durationMs: number;
 }
 
@@ -112,25 +154,89 @@ async function applyWaitStrategy(
 
 // ── Element finder ────────────────────────────────────────────────
 
+/**
+ * Multi-strategy element finder.
+ * 1. Direct CSS selector (primary)
+ * 2. aria-label match
+ * 3. Text content match on clickable elements
+ */
 function findElement(selector: string): Element | null {
+  // Strategy 1: Direct CSS selector
   try {
     const el = document.querySelector(selector);
-    console.log("%c[PageClick:CS] findElement:", "color: #22d3ee", {
-      selector,
-      found: !!el,
-      tagName: el?.tagName,
-      id: (el as any)?.id,
-    });
-    return el;
+    if (el) {
+      console.log("%c[PageClick:CS] findElement (CSS match):", "color: #22d3ee", {
+        selector,
+        tagName: el.tagName,
+      });
+      return el;
+    }
   } catch (e) {
-    console.warn(
-      "%c[PageClick:CS] Invalid selector:",
-      "color: #ef4444",
-      selector,
-      e,
-    );
-    return null;
+    // Invalid CSS selector — fall through to alternatives
+    console.warn("%c[PageClick:CS] Invalid CSS selector:", "color: #ef4444", selector, e);
   }
+
+  // Strategy 2: Try as aria-label
+  try {
+    const byAria = document.querySelector(`[aria-label="${CSS.escape(selector)}"]`);
+    if (byAria) {
+      console.log("%c[PageClick:CS] findElement (aria-label match):", "color: #a78bfa", {
+        selector,
+        tagName: byAria.tagName,
+      });
+      return byAria;
+    }
+  } catch { /* ignore */ }
+
+  // Strategy 3: Text content match on clickable elements
+  const selectorLower = selector.toLowerCase().trim();
+  if (selectorLower.length > 2 && selectorLower.length < 100 && typeof document.querySelectorAll === "function") {
+    const clickable = document.querySelectorAll(
+      'a, button, [role="button"], [role="link"], [role="menuitem"], [role="tab"]',
+    );
+    for (const el of clickable) {
+      const text = el.textContent?.trim().toLowerCase() || "";
+      if (text === selectorLower || text.includes(selectorLower)) {
+        console.log("%c[PageClick:CS] findElement (text match):", "color: #fbbf24", {
+          selector,
+          matchedText: el.textContent?.trim().slice(0, 60),
+          tagName: el.tagName,
+        });
+        return el;
+      }
+    }
+  }
+
+  console.warn("%c[PageClick:CS] findElement: no match found", "color: #ef4444", selector);
+  return null;
+}
+
+/**
+ * Check if an element is visible and interactable (not hidden, not zero-size).
+ */
+function isInteractable(el: Element): boolean {
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return false;
+  // Guard: getComputedStyle may not exist in unit-test environments
+  if (typeof window.getComputedStyle !== "function") return true;
+  const style = window.getComputedStyle(el);
+  if (style.display === "none" || style.visibility === "hidden") return false;
+  if (style.pointerEvents === "none") return false;
+  if ((el as HTMLElement).offsetParent === null && style.position !== "fixed" && style.position !== "sticky") return false;
+  return true;
+}
+
+/**
+ * Build a post-action observation snapshot for the model.
+ */
+function buildObservation(el: Element | null): ExecutionResult["observation"] {
+  return {
+    url: window.location.href,
+    title: document.title,
+    elementFound: !!el,
+    elementVisible: el ? (el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0) : false,
+    elementTag: el?.tagName,
+  };
 }
 
 function scrollIntoViewIfNeeded(el: Element): void {
@@ -537,7 +643,25 @@ export async function executeAction(
       success: false,
       action: step.action,
       selector: step.selector,
-      error: `Element not found: ${step.selector}`,
+      error: `Element not found: ${step.selector}. Try a different selector from the Interactive Elements list.`,
+      observation: buildObservation(null),
+      durationMs: performance.now() - start,
+    };
+  }
+
+  // Check interactability before proceeding
+  if (!isInteractable(el) && step.action !== "extract" && step.action !== "scroll") {
+    console.warn(
+      "%c[PageClick:CS] └── Element NOT INTERACTABLE:",
+      "color: #f59e0b; font-weight: bold",
+      { tag: el.tagName, rect: el.getBoundingClientRect() },
+    );
+    return {
+      success: false,
+      action: step.action,
+      selector: step.selector,
+      error: `Element found but not interactable (hidden, zero-size, or pointer-events:none). Tag: ${el.tagName}. Try scrolling or use a different selector.`,
+      observation: buildObservation(el),
       durationMs: performance.now() - start,
     };
   }
@@ -583,13 +707,32 @@ export async function executeAction(
           step.clearFirst ?? true,
         );
         if (!inputResult.verified) {
-          return {
-            success: false,
-            action: step.action,
-            selector: step.selector,
-            error: `Input verification failed. Expected "${step.value}", got "${inputResult.actualValue}"`,
-            durationMs: performance.now() - start,
-          };
+          // CDP fallback: try typing via CDP Input.insertText
+          console.log(
+            "%c[PageClick:CS] │ DOM input failed, trying CDP fallback...",
+            "color: #f59e0b",
+          );
+          // Focus the target element first
+          if (el instanceof HTMLElement) {
+            el.focus();
+            el.click();
+          }
+          // Short delay for focus to take effect
+          await new Promise((r) => setTimeout(r, 100));
+          const cdpResult = await cdpInsertText(step.value);
+          if (!cdpResult.ok) {
+            return {
+              success: false,
+              action: step.action,
+              selector: step.selector,
+              error: `Input failed (DOM: "${inputResult.actualValue}", CDP: ${cdpResult.error || "failed"})`,
+              durationMs: performance.now() - start,
+            };
+          }
+          console.log(
+            "%c[PageClick:CS] │ CDP input succeeded!",
+            "color: #22c55e",
+          );
         }
         flashElement(el);
         if (inputResult.autocompleteShown) {
@@ -690,6 +833,48 @@ export async function executeAction(
         flashElement(el);
         break;
 
+      case "press_key":
+        if (!step.value) {
+          return {
+            success: false,
+            action: step.action,
+            selector: step.selector,
+            error: "press_key action requires a key name (e.g., 'Enter', 'Escape')",
+            durationMs: performance.now() - start,
+          };
+        }
+        console.log(
+          "%c[PageClick:CS] │ Executing PRESS_KEY:",
+          "color: #22d3ee",
+          step.value,
+        );
+        scrollIntoViewIfNeeded(el);
+        if (el instanceof HTMLElement) el.focus();
+        {
+          const key = step.value;
+          const keyCode = key === "Enter" ? 13 : key === "Escape" ? 27 : key === "Tab" ? 9 : key === "Backspace" ? 8 : key === "Space" ? 32 : 0;
+          el.dispatchEvent(new KeyboardEvent("keydown", { key, code: key, keyCode, bubbles: true, cancelable: true }));
+          el.dispatchEvent(new KeyboardEvent("keypress", { key, code: key, keyCode, bubbles: true, cancelable: true }));
+          el.dispatchEvent(new KeyboardEvent("keyup", { key, code: key, keyCode, bubbles: true, cancelable: true }));
+          // For Enter key on input elements, also submit the parent form
+          if (key === "Enter" && el.closest("form")) {
+            const form = el.closest("form");
+            if (form) {
+              form.requestSubmit?.() ?? form.submit();
+            }
+          }
+          // CDP fallback: also dispatch via CDP for canvas-based editors
+          const cdpKeyResult = await cdpDispatchKey(key);
+          if (cdpKeyResult.ok) {
+            console.log(
+              "%c[PageClick:CS] │ CDP key dispatch succeeded",
+              "color: #22c55e",
+            );
+          }
+        }
+        flashElement(el);
+        break;
+
       default:
         console.warn(
           "%c[PageClick:CS] └── Unknown action:",
@@ -710,7 +895,8 @@ export async function executeAction(
       step.action === "click" ||
       step.action === "input" ||
       step.action === "select" ||
-      step.action === "select_date"
+      step.action === "select_date" ||
+      step.action === "press_key"
     ) {
       // Interaction actions often trigger SPA re-renders without URL changes.
       await waitForDomStable(step.timeoutMs ?? 3000);
@@ -733,6 +919,7 @@ export async function executeAction(
       success: true,
       action: step.action,
       selector: step.selector,
+      observation: buildObservation(el),
       durationMs: duration,
     };
   } catch (err: any) {
@@ -747,6 +934,7 @@ export async function executeAction(
       action: step.action,
       selector: step.selector,
       error: err.message || "Action execution failed",
+      observation: buildObservation(el),
       durationMs: performance.now() - start,
     };
   }

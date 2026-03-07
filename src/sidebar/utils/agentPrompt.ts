@@ -58,11 +58,20 @@ function buildPageContext(snapshot: PageSnapshot | null): string {
   }
 
   if (snapshot.nodes && snapshot.nodes.length > 0) {
-    parts.push(`- Interactive Elements (${snapshot.nodes.length}):`);
+    parts.push(`- Interactive Elements (${snapshot.nodes.length} total, numbered for ordinal reference):`);
     const summary = snapshot.nodes
-      .slice(0, 60)
-      .map((n) => {
-        let desc = `  [${n.tag}] "${n.text}"`;
+      .slice(0, 80)
+      .map((n, idx) => {
+        // Element type label for easier identification
+        const typeLabel =
+          n.tag === "A" ? "link" :
+            n.tag === "BUTTON" ? "button" :
+              n.tag === "INPUT" ? "input" :
+                n.tag === "TEXTAREA" ? "textarea" :
+                  n.tag === "SELECT" ? "select" :
+                    n.tag === "IMG" ? "image" :
+                      n.tag.toLowerCase();
+        let desc = `  [${idx + 1}] (${typeLabel}) "${n.text}"`;
         if (n.attrs?.["aria-label"])
           desc += ` (aria: ${n.attrs["aria-label"]})`;
         if (n.attrs?.href) desc += ` → ${n.attrs.href}`;
@@ -81,6 +90,72 @@ function buildPageContext(snapshot: PageSnapshot | null): string {
 
   if (snapshot.textContent) {
     parts.push(`- Visible Content (excerpt): ${snapshot.textContent}`);
+  }
+
+  return parts.join("\n");
+}
+
+// ── Page state awareness builder ─────────────────────────────────
+
+/** Strip www. from a hostname for comparison */
+function stripWww(hostname: string): string {
+  return hostname.replace(/^www\./, "");
+}
+
+/**
+ * Builds a hard-hitting "you are already here" signal placed at the
+ * VERY TOP of the execution prompt — before the task goal — so the
+ * LLM cannot miss it. Returns an empty string when on chrome:// or
+ * about:blank pages (i.e., no meaningful URL yet).
+ */
+function buildPageStateAwareness(
+  snapshot: PageSnapshot | null,
+  orchestratorHistory: { action: string; value?: string; url: string }[],
+): string {
+  if (!snapshot?.url) return "";
+
+  // Skip for browser-internal pages
+  const url = snapshot.url;
+  if (url.startsWith("chrome://") || url.startsWith("about:") || url.startsWith("chrome-extension://")) {
+    return "";
+  }
+
+  let domain = "";
+  try {
+    domain = stripWww(new URL(url).hostname);
+  } catch { return ""; }
+
+  const parts: string[] = [
+    `🚨 STOP — READ THIS FIRST:`,
+    `👉 You are CURRENTLY ON: ${url}`,
+    `👉 Current domain: ${domain}`,
+    `❌ DO NOT call navigate() for ${domain}, www.${domain}, or any URL on this domain.`,
+    `❌ DO NOT call navigate() for the URL you are already viewing.`,
+    `✅ You are ALREADY HERE. Proceed to the NEXT uncompleted step of the task.`,
+  ];
+
+  // Detect if navigate was already called for this domain in history
+  const alreadyNavigated = orchestratorHistory.some(
+    (h) => h.action === "navigate" && h.url && stripWww(new URL(h.url).hostname || "") === domain,
+  );
+  if (alreadyNavigated) {
+    parts.push(`⚠️ You have ALREADY navigated to ${domain} in a previous step. Navigation is DONE. Move forward.`);
+  }
+
+  // Input fields with existing values
+  if (snapshot.nodes && snapshot.nodes.length > 0) {
+    const filledInputs = snapshot.nodes.filter(
+      (n) =>
+        (n.tag === "INPUT" || n.tag === "TEXTAREA") &&
+        n.attrs?.value &&
+        n.attrs.value.trim().length > 0,
+    );
+    if (filledInputs.length > 0) {
+      parts.push(`Input fields with EXISTING values (do NOT re-type these):`);
+      for (const input of filledInputs.slice(0, 8)) {
+        parts.push(`  • ${input.path}: already contains "${input.attrs!.value}"`);
+      }
+    }
   }
 
   return parts.join("\n");
@@ -152,6 +227,42 @@ function buildCDPContext(cdp: CDPSnapshot | null | undefined): string {
   return raw.length > 1500 ? raw.slice(0, 1497) + "..." : raw;
 }
 
+// ── Canvas-based editor detection ─────────────────────────────────
+
+const CANVAS_EDITOR_DOMAINS = [
+  "docs.google.com",
+  "sheets.google.com",
+  "slides.google.com",
+];
+
+const EDITING_INTENT_PATTERN =
+  /\b(write|type|enter|add|insert|paste|edit|compose|draft|put)\b/i;
+
+function buildCanvasEditorWarning(
+  snapshot: PageSnapshot | null,
+  goal: string,
+): string {
+  if (!snapshot?.url) return "";
+  let domain = "";
+  try {
+    domain = new URL(snapshot.url).hostname;
+  } catch {
+    return "";
+  }
+  if (!CANVAS_EDITOR_DOMAINS.some((d) => domain.endsWith(d))) return "";
+  if (!EDITING_INTENT_PATTERN.test(goal)) return "";
+
+  return `📝 GOOGLE DOCS/SHEETS/SLIDES DETECTED — SPECIAL TYPING MODE:
+- You are on ${domain}, which uses a canvas-based editor.
+- Standard DOM input does NOT work here — but CDP-based typing IS enabled as a fallback.
+- To type content into the document:
+  1. Use "click" on the document editing area (e.g., the main content canvas) to focus it.
+  2. Use "input" with your text — the CDP fallback will handle insertion automatically.
+  3. Use "press_key" with "Enter" (or "Return") to add new lines / paragraphs.
+- Break long content into multiple input + press_key steps (one paragraph per input action).
+- Do NOT try to select all or clear first — just click to position cursor, then type.`;
+}
+
 // ── Project context builder ───────────────────────────────────────
 
 function buildProjectContext(project: Project | null | undefined): string {
@@ -214,10 +325,24 @@ export function buildExecutionPrompt(
   const cdpContext = buildCDPContext(cdp);
   const projectContext = buildProjectContext(project);
   const lastFailure = orchestrator.getLastFailure();
-  const stuckGuidance = orchestrator.isStuck()
-    ? `\nSTUCK SIGNAL:
-- You have been on the same page with no form-progress change for multiple loops.
-- Your next action should be recovery-oriented: scroll, reveal hidden controls, or click Next/Continue.`
+  // Detect what KIND of stuck we are (scroll loop vs general)
+  const isStuckNow = orchestrator.isStuck();
+  const recentHistory = state.history.slice(-3);
+  const isScrollLoop = isStuckNow && recentHistory.length >= 3 &&
+    recentHistory.every((e) => e.plan.actions.every((a) => a.action === "scroll"));
+  const stuckGuidance = isStuckNow
+    ? isScrollLoop
+      ? `\n🛑 SCROLL LOOP DETECTED:
+- You have been scrolling up and down for ${recentHistory.length}+ loops WITHOUT clicking anything.
+- STOP SCROLLING IMMEDIATELY.
+- The elements you need are ALREADY in the Interactive Elements list above.
+- Look at the NUMBERED elements list. Find the item that matches your task and CLICK it now.
+- If the task asks for the "Nth" item (e.g., 3rd video, 2nd product), COUNT the numbered items of that type in the list and click the correct one.
+- Do NOT scroll again — pick an element and click it.`
+      : `\nSTUCK SIGNAL:
+- You have been on the same page with no progress for multiple loops.
+- Your next action should be a CLICK on a specific element, not another scroll.
+- Review the numbered Interactive Elements list and click the most relevant one.`
     : "";
   const failureGuidance = lastFailure
     ? `\n⚠️ LAST ACTION FAILED:
@@ -228,13 +353,36 @@ export function buildExecutionPrompt(
 - If target may be off-screen, use scroll first before retrying.`
     : "";
 
+  // Duplicate action warnings from orchestrator
+  const duplicateWarnings = orchestrator.getRecentDuplicateActions();
+
+  // Extract simplified history for page state awareness
+  const historyForAwareness = state.history.flatMap((entry) =>
+    entry.results
+      .filter((r) => r.success)
+      .map((r, i) => ({
+        action: r.action,
+        value: entry.plan.actions[i]?.value,
+        url: entry.flowState?.url || entry.pageUrl,
+      })),
+  );
+
+  // Page state awareness (already-on-URL, filled inputs) — placed at VERY TOP
+  const pageAwareness = buildPageStateAwareness(snapshot, historyForAwareness);
+
+  // Canvas-based editor detection (Google Docs/Sheets/Slides)
+  const canvasEditorWarning = buildCanvasEditorWarning(snapshot, state.goal);
+
   return `You are PageClick AI, an autonomous browser automation agent. You are in the EXECUTION phase — you must generate the NEXT SINGLE ACTION to take.
 
+${pageAwareness}
+${canvasEditorWarning ? "\n" + canvasEditorWarning + "\n" : ""}
 TASK GOAL: "${state.goal}"
 
 ${clarifications}
 
 ${historySummary}
+${duplicateWarnings}
 ${stuckGuidance}
 ${failureGuidance}
 
@@ -247,24 +395,63 @@ LOOP ITERATION: ${state.loopCount + 1} / ${state.maxLoops}${state.loopCount >= s
 ${FORMATTING_RULES}
 
 INSTRUCTIONS:
-1. Look at the current page state, FLOW POSITION, and your previous actions.
-2. Think step-by-step: write a brief 1-sentence reasoning in your response text BEFORE calling any tool. This helps you plan better. For example: "The search box is visible at #search-input, I'll type the query there."
-3. Determine the SINGLE BEST next action to take toward the goal.
-4. Call EXACTLY ONE tool. After this action executes, you'll get a fresh page snapshot to decide the next step.
-5. Use CSS selectors from the Interactive Elements list above when selecting elements.
-6. If the page hasn't loaded expected content, use scroll to reveal more content.
-7. If you need to navigate to a new page, use the navigate tool.
-7.1. For date inputs/calendars, prefer select_date with YYYY-MM-DD instead of generic input.
-8. Pay attention to FLOW POSITION — if a form shows "Step 2 of 5" with unfilled fields, fill those fields BEFORE clicking Next.
-9. If a loading indicator is detected, use scroll or wait before taking action — the page may not be ready.
-10. Check element values/states (aria-expanded, aria-selected, value) to understand what's already done.
-11. If the previous attempt already did the same action on the same selector/value and page, choose a DIFFERENT action.
+1. FIRST check PAGE STATE AWARENESS above. If you are already on the target URL, do NOT navigate again.
+2. FIRST check the PREVIOUS ACTIONS section. If you already performed an action successfully, do NOT repeat it.
+3. BEFORE calling any tool, you MUST state your structured reasoning:
+   - CURRENT STATE: "I am on [URL]. The page shows [key visible content]."
+   - OBSERVATION: "I can see [relevant elements/state] in the Interactive Elements list."
+   - REASONING: "The next uncompleted step is [X] because [why]."
+   - TARGET: "I will use selector [exact selector from the list] because [it matches element #N which is...]."
+   This structured reasoning is CRITICAL for accurate action selection.
+4. Determine the SINGLE BEST next action to take toward the goal.
+5. Call EXACTLY ONE tool. After this action executes, you'll get a fresh page snapshot to decide the next step.
+6. Use CSS selectors from the Interactive Elements list above when selecting elements.
+7. If the page hasn't loaded expected content, use scroll to reveal more content.
+8. If you need to navigate to a NEW, DIFFERENT page, use the navigate tool. NEVER navigate to the page you are already on.
+8.1. For date inputs/calendars, prefer select_date with YYYY-MM-DD instead of generic input.
+9. Pay attention to FLOW POSITION — if a form shows "Step 2 of 5" with unfilled fields, fill those fields BEFORE clicking Next.
+10. If a loading indicator is detected, use scroll or wait before taking action — the page may not be ready.
+11. Check element values/states (aria-expanded, aria-selected, value) to understand what's already done. If an input already has the target value, SKIP it.
+12. NEVER repeat an identical action. If the previous attempt already did the same action on the same selector/value, you MUST choose a DIFFERENT action or call task_complete.
+
+SELECTOR VERIFICATION (CRITICAL — do this EVERY time):
+- Before using a selector, VERIFY it exists in the Interactive Elements list above.
+- If your target selector is NOT in the list, do NOT use it. Find the closest match instead.
+- Use the SHORT selectors from the Interactive Elements list, not invented or overly-specific ones.
+- If an element has an id (e.g., #search-box), prefer that over long CSS paths.
+- If you can't find the right selector, use extract or scroll to discover more elements.
+
+ORDINAL ITEM SELECTION (CRITICAL for "click the Nth item" tasks):
+- Elements in the Interactive Elements list above are NUMBERED: [1], [2], [3], etc.
+- When asked to click the "Nth" item (e.g., 3rd video, 2nd product):
+  1. Scan the NUMBERED list for elements matching the type (e.g., video titles are (link) elements with video-related text)
+  2. Count ONLY matching elements — skip navigation, ads, menu items, and UI chrome
+  3. The 1st matching element = element #1, 2nd matching = #2, 3rd matching = #3
+  4. Click the EXACT selector of the Nth matching element
+- Example: If task says "click the 3rd video" and you see:
+    [15] (link) "Video A" — this is video #1
+    [18] (link) "Video B" — this is video #2  
+    [21] (link) "Video C" — this is video #3 ← CLICK THIS ONE
+- You MUST state which numbered element you're clicking and why in your reasoning.
+- Do NOT scroll looking for items — they are ALREADY in the list. If you've scrolled 2+ times, the items are visible. CLICK one now.
+
+SEARCH SUBMISSION STRATEGY:
+- After typing a search query into an input field, PREFER using press_key with value "Enter" on the same input to submit the form.
+- This is MORE RELIABLE than trying to click a search/submit button, because button selectors are often complex and unreliable.
+- Only try clicking a search button if press_key Enter doesn't work.
+
+E-COMMERCE PRODUCT INTERACTION (Amazon, Flipkart, etc.):
+- Product titles are typically (link) elements. To click a product, click the (link) element containing the product name.
+- When asked to click the "Nth product", count ONLY product title links (skip sponsored labels, ad badges, "Add to Cart" buttons, and non-product links).
+- Filters (like "4 Stars & Up") are usually (link) or (span) elements in a sidebar — look for them in the Interactive Elements list.
+- Do NOT keep scrolling to find products if you've already scrolled 2+ times. They are in the numbered list.
 
 RULES:
-- ALWAYS write your brief reasoning as text content BEFORE the tool call. This is critical for accurate action selection.
+- ALWAYS write your structured reasoning (CURRENT STATE → OBSERVATION → REASONING → TARGET) as text content BEFORE the tool call. Skipping this leads to wrong selector choices.
 - Call ONLY ONE tool per turn — never chain multiple actions.
-- For input: selector must target an actual input/textarea element.
-- For navigate: put the full URL in the value parameter.
+- For input: selector must target an actual input/textarea element. If the field already has the target value, SKIP the input action.
+- For press_key: use on a focused input to press Enter, Escape, Tab etc. Prefer this over clicking submit buttons for search forms.
+- For navigate: put the full URL in the value parameter. ABSOLUTELY NEVER navigate to a URL you are already on.
 - For eval: put the JS expression in value (selector can be empty).
 - NEVER interact with password fields, credit card fields, or payment forms.
 - If you see a checkout/payment page, call the checkpoint tool.
@@ -275,7 +462,6 @@ RULES:
 - Use native for clipboard/file operations — pass a JSON operation in value.
 - For clipboard: always use the native tool, never navigator.clipboard or execCommand.
 - Factor in RUNTIME CONTEXT (JS errors, network failures) when choosing your next action.
-- Never repeat an identical action (same action + selector + value) more than once unless the page state clearly changed.
 - YOUTUBE ADS: If you see a "Skip Ad", "Skip Ads", or "Skip" button on YouTube (selectors: .ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, button[class*="skip"]), click it IMMEDIATELY before doing anything else. Also dismiss any overlay/popup ads or consent dialogs that block the video.
 `;
 }
@@ -346,6 +532,8 @@ const BROWSER_ACTION_PATTERNS = [
   /\b(read file|local file|native app|filesystem)\b/i,
   // Very intentional action language
   /\b(do it|do this|do that|go ahead|proceed|make it happen)\b/i,
+  // Writing/typing content on a page or document
+  /\b(write|type)\b.{0,30}\b(on|in|into)\b.{0,20}\b(this |the )?(doc|document|page|sheet|slide|form|file)\b/i,
 ];
 
 /**

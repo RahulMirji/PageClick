@@ -217,4 +217,77 @@ describe("TaskOrchestrator", () => {
     expect(summary).toContain("Iteration 10");
     expect(summary).toContain("earlier iterations omitted");
   });
+
+  it("detects stuck state after just 2 navigate-only loops on same URL", () => {
+    const orchestrator = new TaskOrchestrator();
+    orchestrator.startTask("Go to google.com");
+    orchestrator.beginExecution();
+
+    const navPlan: ActionPlan = {
+      explanation: "Navigate to google.com",
+      actions: [
+        {
+          action: "navigate",
+          selector: "",
+          value: "https://www.google.com",
+          confidence: 0.9,
+          risk: "low",
+          description: "Navigate to Google",
+        },
+      ],
+    };
+
+    for (let i = 1; i <= 2; i++) {
+      orchestrator.completeLoop({
+        iteration: i,
+        pageUrl: "https://www.google.com",
+        plan: navPlan,
+        results: [
+          {
+            success: true,
+            action: "navigate",
+            selector: "",
+            durationMs: 100,
+          },
+        ],
+        flowState: { url: "https://www.google.com" },
+        timestamp: Date.now(),
+      });
+    }
+
+    expect(orchestrator.isStuck()).toBe(true);
+  });
+
+  it("returns duplicate actions from recent history via getRecentDuplicateActions", () => {
+    const orchestrator = new TaskOrchestrator();
+    orchestrator.startTask("Search on Google");
+    orchestrator.beginExecution();
+
+    orchestrator.completeLoop({
+      iteration: 1,
+      pageUrl: "https://www.google.com",
+      plan: {
+        explanation: "Navigate to Google",
+        actions: [
+          { action: "navigate", selector: "", value: "https://www.google.com", confidence: 0.9, risk: "low", description: "Navigate" },
+        ],
+      },
+      results: [
+        { success: true, action: "navigate", selector: "", durationMs: 100 },
+      ],
+      flowState: { url: "https://www.google.com" },
+      timestamp: Date.now(),
+    });
+
+    const warnings = orchestrator.getRecentDuplicateActions();
+    expect(warnings).toContain("ALREADY COMPLETED ACTIONS");
+    expect(warnings).toContain("navigate");
+    expect(warnings).toContain("https://www.google.com");
+  });
+
+  it("returns empty string from getRecentDuplicateActions when no history", () => {
+    const orchestrator = new TaskOrchestrator();
+    orchestrator.startTask("New task");
+    expect(orchestrator.getRecentDuplicateActions()).toBe("");
+  });
 });

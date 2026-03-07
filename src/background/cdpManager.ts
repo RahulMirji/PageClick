@@ -215,6 +215,106 @@ class CDPManager {
     }
   }
 
+  /**
+   * Insert text at the current cursor position via CDP Input.insertText.
+   * Works with Google Docs, Sheets, Slides, and other canvas-based editors
+   * that listen for native input events rather than DOM mutations.
+   */
+  async insertText(
+    tabId: number,
+    text: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!this.sessions.has(tabId)) {
+      // Auto-attach if not already attached
+      const attachResult = await this.attach(tabId);
+      if (!attachResult.ok) {
+        return { ok: false, error: attachResult.error || "Failed to attach debugger" };
+      }
+    }
+    try {
+      await sendCommand(tabId, "Input.insertText", { text });
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  }
+
+  /**
+   * Dispatch a keyboard key press via CDP Input.dispatchKeyEvent.
+   * Sends the full keyDown → char → keyUp sequence expected by editors.
+   * Use for special keys like Enter, Backspace, Tab, Escape, arrow keys.
+   */
+  async dispatchKey(
+    tabId: number,
+    key: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!this.sessions.has(tabId)) {
+      const attachResult = await this.attach(tabId);
+      if (!attachResult.ok) {
+        return { ok: false, error: attachResult.error || "Failed to attach debugger" };
+      }
+    }
+
+    // Map key names to CDP key codes and properties
+    const keyMap: Record<string, { keyCode: number; code: string; text?: string }> = {
+      Enter: { keyCode: 13, code: "Enter", text: "\r" },
+      Return: { keyCode: 13, code: "Enter", text: "\r" },
+      Backspace: { keyCode: 8, code: "Backspace" },
+      Tab: { keyCode: 9, code: "Tab" },
+      Escape: { keyCode: 27, code: "Escape" },
+      Space: { keyCode: 32, code: "Space", text: " " },
+      ArrowUp: { keyCode: 38, code: "ArrowUp" },
+      ArrowDown: { keyCode: 40, code: "ArrowDown" },
+      ArrowLeft: { keyCode: 37, code: "ArrowLeft" },
+      ArrowRight: { keyCode: 39, code: "ArrowRight" },
+      Delete: { keyCode: 46, code: "Delete" },
+      Home: { keyCode: 36, code: "Home" },
+      End: { keyCode: 35, code: "End" },
+    };
+
+    const mapped = keyMap[key];
+    if (!mapped) {
+      return { ok: false, error: `Unknown key: "${key}"` };
+    }
+
+    try {
+      // keyDown
+      await sendCommand(tabId, "Input.dispatchKeyEvent", {
+        type: "rawKeyDown",
+        key,
+        code: mapped.code,
+        windowsVirtualKeyCode: mapped.keyCode,
+        nativeVirtualKeyCode: mapped.keyCode,
+      });
+
+      // char event (only for keys that produce text)
+      if (mapped.text) {
+        await sendCommand(tabId, "Input.dispatchKeyEvent", {
+          type: "char",
+          key,
+          code: mapped.code,
+          text: mapped.text,
+          unmodifiedText: mapped.text,
+          windowsVirtualKeyCode: mapped.keyCode,
+          nativeVirtualKeyCode: mapped.keyCode,
+        });
+      }
+
+      // keyUp
+      await sendCommand(tabId, "Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key,
+        code: mapped.code,
+        windowsVirtualKeyCode: mapped.keyCode,
+        nativeVirtualKeyCode: mapped.keyCode,
+      });
+
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  }
+
   // ── Event handling ────────────────────────────────────────────
 
   private onEvent(

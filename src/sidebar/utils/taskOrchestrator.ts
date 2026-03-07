@@ -301,9 +301,35 @@ export class TaskOrchestrator {
 
   /**
    * Detect if the agent appears stuck (same URL, no progress for 3+ loops).
+   * Triggers earlier (2 loops) for navigate-only loops where the agent
+   * is pointlessly re-navigating to the same URL.
    */
   isStuck(): boolean {
     const h = this.state.history;
+
+    // Fast path: navigate-only loops — trigger after just 2 repeats
+    if (h.length >= 2) {
+      const last2 = h.slice(-2);
+      const urls = last2.map((e) => e.flowState?.url || e.pageUrl);
+      const sameUrl = urls.every((u) => u === urls[0]);
+      if (sameUrl) {
+        const allNavigate = last2.every((e) =>
+          e.plan.actions.every((a) => a.action === "navigate"),
+        );
+        if (allNavigate) return true;
+      }
+    }
+
+    // Scroll-loop detection: if the last 3+ actions are all scroll (any direction),
+    // the agent is stuck in a scroll loop and should try something else
+    if (h.length >= 3) {
+      const last3 = h.slice(-3);
+      const allScroll = last3.every((e) =>
+        e.plan.actions.every((a) => a.action === "scroll"),
+      );
+      if (allScroll) return true;
+    }
+
     if (h.length < 3) return false;
     const recent = h.slice(-3);
     const normalizedUrls = recent.map((e) => e.flowState?.url || e.pageUrl);
@@ -404,6 +430,53 @@ export class TaskOrchestrator {
     return lines.join("\n");
   }
 
+  /**
+   * Scans recent history and returns a formatted warning string listing
+   * action+selector+value combinations that were already executed successfully.
+   * Injected into the execution prompt to prevent the LLM from repeating them.
+   */
+  getRecentDuplicateActions(): string {
+    const h = this.state.history;
+    if (h.length === 0) return "";
+
+    // Collect unique successful action signatures from the last 5 entries
+    const seen = new Map<string, { action: string; selector: string; value?: string; url: string }>();
+    const recent = h.slice(-5);
+    for (const entry of recent) {
+      for (let i = 0; i < entry.results.length; i++) {
+        const r = entry.results[i];
+        if (!r.success) continue;
+        const step = entry.plan.actions[i];
+        if (!step) continue;
+        const sig = `${step.action}|${(step.selector || "").toLowerCase()}|${(step.value || "").toLowerCase()}`;
+        if (!seen.has(sig)) {
+          seen.set(sig, {
+            action: step.action,
+            selector: step.selector || "",
+            value: step.value,
+            url: entry.flowState?.url || entry.pageUrl,
+          });
+        }
+      }
+    }
+
+    if (seen.size === 0) return "";
+
+    const lines: string[] = [
+      "⚠️ ALREADY COMPLETED ACTIONS (do NOT repeat these):",
+    ];
+    for (const [, info] of seen) {
+      let desc = `  ✅ ${info.action}`;
+      if (info.selector) desc += ` on "${info.selector}"`;
+      if (info.value) desc += ` with value "${info.value}"`;
+      desc += ` (on ${info.url})`;
+      lines.push(desc);
+    }
+    lines.push("If you need to do the same type of action, use a DIFFERENT selector or value.");
+
+    return lines.join("\n");
+  }
+
   // ── Private ───────────────────────────────────────────────────
 
   private emit(event: TaskEvent): void {
@@ -431,10 +504,18 @@ export class TaskOrchestrator {
       /fill|form|application|register|sign up/,
       /create|setup|install|enable|connect/,
       /\bthen\b|\band\b|\bafter\b/,
+      // E-commerce: search + filter + click product
+      /filter|product|add to cart|buy|purchase|shop|amazon|flipkart|ebay/,
+      // Video platforms: search + click video + like/subscribe
+      /video|youtube|watch|subscribe|like.*video|play/,
+      // Search + click result patterns
+      /search.*click|click.*\d+(st|nd|rd|th)/,
+      // Multi-action with commas ("do X, then Y, then Z")
+      /,.*,/,
     ];
     if (multiStepPatterns.some((p) => p.test(text))) return 25;
 
-    return 10;
+    return 15;
   }
 
   private estimateResumeLoops(goal: string): number {

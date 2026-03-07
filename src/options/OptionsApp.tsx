@@ -10,7 +10,7 @@ interface Settings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  defaultModel: "gemini-3-pro",
+  defaultModel: "kimi-k2.5",
   theme: "light",
 };
 

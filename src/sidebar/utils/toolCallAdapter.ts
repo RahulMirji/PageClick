@@ -46,6 +46,7 @@ const ACTION_TOOL_NAMES = new Set<string>([
     "download",
     "tabgroup",
     "native",
+    "press_key",
 ]);
 
 // ── Argument normalizer ───────────────────────────────────────────

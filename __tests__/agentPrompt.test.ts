@@ -48,6 +48,15 @@ describe("agentPrompt task detection", () => {
     expect(isTaskRequest("Scroll down")).toBe(true);
   });
 
+  it("detects document editing tasks", () => {
+    expect(isTaskRequest("Can you write a story on this doc? And the story should be on the Ramayana")).toBe(true);
+    expect(isTaskRequest("Write a summary on this document")).toBe(true);
+    expect(isTaskRequest("Type my notes into this doc")).toBe(true);
+    expect(isTaskRequest("Add a paragraph in this page")).toBe(true);
+    // Coding requests should still be non-tasks
+    expect(isTaskRequest("Write me a Python function to sort a list")).toBe(false);
+  });
+
   // ── Conversational / coding queries (should be false) ──────────
   it("does not classify code requests as tasks", () => {
     expect(isTaskRequest("Write me a Python function to sort a list")).toBe(false);

@@ -42,7 +42,7 @@ const GEMINI_CONFIG = {
   baseUrl: "https://generativelanguage.googleapis.com/v1beta/models",
 };
 
-const DEFAULT_MODEL = "gemini-3-pro";
+const DEFAULT_MODEL = "kimi-k2.5";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -430,11 +430,12 @@ async function callOpenAIToolCall(
           model,
           messages,
           tools: optimizedTools,
-          tool_choice: "required",
+          tool_choice: kimi ? "auto" : "required",
           stream: false,
-          temperature: kimi ? 0 : 0.1,
-          // Tool calls are small payloads; Kimi is faster with a tighter limit.
-          max_tokens: kimi ? 512 : 1024,
+          temperature: kimi ? 0.6 : 0.1,
+          top_p: kimi ? 0.95 : undefined,
+          // Kimi reasoning traces need more room; 1024 for all tool-call models.
+          max_tokens: 1024,
         }),
       });
 

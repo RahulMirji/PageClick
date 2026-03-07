@@ -55,7 +55,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 const KIMI_TOOL_CONTEXT_TOKENS = 3200;
 const KIMI_TOOL_HISTORY_MESSAGES = 8;
-const LOOP_GUARD_MAX_IDENTICAL_STEP_REPEATS = 3;
+const LOOP_GUARD_MAX_IDENTICAL_STEP_REPEATS = 2;
 
 /**
  * Remove all <<<TAG>>>...<<<END_TAG>>> structured blocks from a message.
@@ -77,10 +77,12 @@ function normalizeComparableUrl(raw?: string): string {
   if (!raw) return "";
   try {
     const u = new URL(raw);
+    // Strip www. so "www.youtube.com" matches "youtube.com"
+    const host = u.hostname.replace(/^www\./, "");
     const path = u.pathname.replace(/\/+$/, "") || "/";
-    return `${u.origin}${path}${u.search || ""}`;
+    return `${u.protocol}//${host}${path}${u.search || ""}`;
   } catch {
-    return raw.trim();
+    return raw.trim().replace(/^(https?:\/\/)?(www\.)?/, "");
   }
 }
 
@@ -175,7 +177,7 @@ function buildNativeStepFromGoal(goal: string): ActionStep | null {
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<ModelId>("llama-4-scout");
+  const [selectedModel, setSelectedModel] = useState<ModelId>("kimi-k2.5");
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("agent");
 
   // Auth state
@@ -286,6 +288,20 @@ function App() {
     return unsub;
   }, []);
 
+  // Load saved model preference from extension storage on mount
+  useEffect(() => {
+    try {
+      chrome.storage.local.get("pageclick_settings", (result) => {
+        const saved = result["pageclick_settings"];
+        if (saved?.defaultModel) {
+          setSelectedModel(saved.defaultModel as ModelId);
+        }
+      });
+    } catch {
+      // chrome.storage may not be available in dev mode
+    }
+  }, []);
+
   // Keep messagesRef always in sync with messages state
   useEffect(() => {
     messagesRef.current = messages;
@@ -293,8 +309,6 @@ function App() {
 
   const callModel = async (
     systemPrompt: string,
-    userMessage?: string,
-    images?: string[],
   ) => {
     // Use messagesRef.current (always up-to-date) instead of stale closure `messages`
     const currentMessages = messagesRef.current;
@@ -323,21 +337,6 @@ function App() {
     }
 
     const apiMessages = [{ role: "system", content: systemPrompt }, ...trimmed];
-
-    if (userMessage) {
-      apiMessages.push({
-        role: "user",
-        content: images
-          ? [
-            ...images.map((url) => ({
-              type: "image_url",
-              image_url: { url },
-            })),
-            { type: "text", text: userMessage },
-          ]
-          : userMessage,
-      });
-    }
 
     const response = await fetch(`${SUPABASE_URL}/functions/v1/chat`, {
       method: "POST",
@@ -681,20 +680,18 @@ function App() {
       await runAgentLoop(convId);
     } else {
       // Chat mode — one-shot answer
-      await runInfoRequest(convId, text, images);
+      await runInfoRequest(convId);
     }
   };
 
   const runInfoRequest = async (
     convId: string,
-    text: string,
-    images?: string[],
   ) => {
     stopScanRef.current = await triggerPageScan();
     try {
       const snapshot = await capturePage();
       const prompt = buildInfoPrompt(snapshot, activeProjectRef.current);
-      const response = await callModel(prompt, text, images);
+      const response = await callModel(prompt);
       await streamResponse(response, convId, false);
     } catch (err: any) {
       if (err.name === "AbortError") return; // User stopped
@@ -1019,6 +1016,77 @@ function App() {
                 break;
               }
 
+              // Pre-action navigate deduplication: if we're already on the target URL, skip it.
+              if (step.action === "navigate" && step.value) {
+                const currentUrl = normalizeComparableUrl(loopSnapshot?.url || pageUrlRef.current);
+                const targetUrl = normalizeComparableUrl(step.value);
+                if (currentUrl && targetUrl && currentUrl === targetUrl) {
+                  console.warn(`[Agent] Navigate dedup: already on ${targetUrl}, skipping navigate`);
+                  const skipResult = {
+                    success: true,
+                    action: step.action,
+                    selector: step.selector,
+                    extractedData: `Already on ${targetUrl} — skipped redundant navigation`,
+                    durationMs: 0,
+                  };
+                  orchestrator.recordStepResult(skipResult);
+                  results.push(skipResult);
+                  accumulatedProgressRef.current.steps[globalIndex].status = "completed";
+                  updateProgress(accumulatedProgressRef.current);
+                  continue;
+                }
+                // Also check domain-level match: strip www. and compare
+                try {
+                  const currentHost = new URL(loopSnapshot?.url || pageUrlRef.current || "").hostname.replace(/^www\./, "");
+                  const targetParsed = new URL(step.value.startsWith("http") ? step.value : `https://${step.value}`);
+                  const targetHost = targetParsed.hostname.replace(/^www\./, "");
+                  if (currentHost === targetHost) {
+                    // If navigating to the same domain root while already browsing the site, skip
+                    const targetPath = targetParsed.pathname.replace(/\/+$/, "") || "/";
+                    if (targetPath === "/") {
+                      console.warn(`[Agent] Navigate dedup: already on domain ${targetHost}, skipping root navigate`);
+                      const skipResult = {
+                        success: true,
+                        action: step.action,
+                        selector: step.selector,
+                        extractedData: `Already on ${targetHost} — skipped redundant domain navigation`,
+                        durationMs: 0,
+                      };
+                      orchestrator.recordStepResult(skipResult);
+                      results.push(skipResult);
+                      accumulatedProgressRef.current.steps[globalIndex].status = "completed";
+                      updateProgress(accumulatedProgressRef.current);
+                      continue;
+                    }
+                  }
+                } catch { /* URL parse failed, proceed normally */ }
+              }
+
+              // Pre-action input deduplication: if field already has the target value, skip re-typing.
+              if (step.action === "input" && step.value && loopSnapshot?.nodes) {
+                const targetNode = loopSnapshot.nodes.find(n => {
+                  if (!step.selector) return false;
+                  // Simple path-based match
+                  return n.path === step.selector;
+                });
+                if (targetNode?.attrs?.value &&
+                  targetNode.attrs.value.trim().toLowerCase() === step.value.trim().toLowerCase()) {
+                  console.warn(`[Agent] Input dedup: field ${step.selector} already has value "${step.value}", skipping`);
+                  const skipResult = {
+                    success: true,
+                    action: step.action,
+                    selector: step.selector,
+                    extractedData: `Field already contains "${step.value}" — skipped redundant input`,
+                    durationMs: 0,
+                  };
+                  orchestrator.recordStepResult(skipResult);
+                  results.push(skipResult);
+                  accumulatedProgressRef.current.steps[globalIndex].status = "completed";
+                  updateProgress(accumulatedProgressRef.current);
+                  continue;
+                }
+              }
+
               const stepT0 = performance.now();
               console.log(`[Agent] Executing step ${si + 1}/${plan.actions.length}: ${step.action} selector="${step.selector?.slice(0, 40) || ''}" value="${step.value?.slice(0, 40) || ''}"`);
               const result = await executeStep(step);
@@ -1061,8 +1129,8 @@ function App() {
                 consecutiveFailuresRef.current = { action: "", count: 0 };
               }
 
-              if (step.action === "navigate") {
-                console.log(`[Agent] Navigate detected — waiting for page load...`);
+              if (step.action === "navigate" || (step.action === "press_key" && step.value === "Enter")) {
+                console.log(`[Agent] Navigate/Enter detected — waiting for page load...`);
                 await waitForPageLoad();
                 console.log(`[Agent] Page loaded — re-triggering scan`);
                 stopScanRef.current?.();
