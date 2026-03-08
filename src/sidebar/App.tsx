@@ -223,11 +223,21 @@ function App() {
     explanation: "",
     steps: [],
   });
+  /**
+   * currentIterationStepsRef holds ONLY the steps from the current model call's plan.
+   * The progress card renders this during active execution so the bar never jumps
+   * backwards when new iterations append more steps to the accumulated list.
+   */
+  const currentIterationStepsRef = useRef<TaskProgress>({
+    explanation: "",
+    steps: [],
+  });
 
   /** Reset progress tracking for a new task */
   const resetProgressTracking = useCallback(() => {
     progressMsgIndexRef.current = -1;
     accumulatedProgressRef.current = { explanation: "", steps: [] };
+    currentIterationStepsRef.current = { explanation: "", steps: [] };
   }, []);
 
   /** Update the single persistent progress card */
@@ -953,6 +963,18 @@ function App() {
 
             accumulatedProgressRef.current.explanation = plan.explanation;
 
+            // Build fresh steps for THIS iteration only — shown live in the progress card.
+            // This prevents the bar from jumping backwards as new iterations append more steps.
+            const currentIterationSteps: TaskProgress = {
+              explanation: plan.explanation,
+              steps: plan.actions.map((a) => ({
+                description: a.description || `${a.action} on element`,
+                status: "pending" as const,
+              })),
+            };
+            currentIterationStepsRef.current = currentIterationSteps;
+            updateProgress(currentIterationStepsRef.current);
+
             const newStepsStart = accumulatedProgressRef.current.steps.length;
             for (const a of plan.actions) {
               accumulatedProgressRef.current.steps.push({
@@ -960,12 +982,12 @@ function App() {
                 status: "pending",
               });
             }
-            updateProgress(accumulatedProgressRef.current);
 
             const results = [];
             for (let si = 0; si < plan.actions.length; si++) {
               const step = plan.actions[si];
               const globalIndex = newStepsStart + si;
+              // Show ALL accumulated steps in the progress card so the user sees every step
               accumulatedProgressRef.current.steps[globalIndex].status = "running";
               updateProgress(accumulatedProgressRef.current);
 
@@ -1091,10 +1113,33 @@ function App() {
               console.log(`[Agent] Executing step ${si + 1}/${plan.actions.length}: ${step.action} selector="${step.selector?.slice(0, 40) || ''}" value="${step.value?.slice(0, 40) || ''}"`);
               const result = await executeStep(step);
               console.log(`[Agent] Step ${si + 1} result: success=${result.success}${result.error ? ` error="${result.error}"` : ''} (${(performance.now() - stepT0).toFixed(0)}ms)`);
-              orchestrator.recordStepResult(result);
-              results.push(result);
+              let stepResult = result;
+              // Fix: press_key Enter on a search input causes the page to navigate, which
+              // triggers a DOM disconnection error inside waitForDomStable in the content
+              // script. The content script returns success=false even though the action
+              // worked perfectly. Detect this by checking if the URL changed after the
+              // step — if it did, the key press clearly worked.
+              if (
+                !result.success &&
+                step.action === "press_key" &&
+                step.value === "Enter" &&
+                result.error
+              ) {
+                const preStepUrl = normalizeComparableUrl(loopSnapshot?.url || pageUrlRef.current);
+                const postStepUrl = normalizeComparableUrl(result.observation?.url || "");
+                const urlChanged = postStepUrl && preStepUrl && postStepUrl !== preStepUrl;
+                // Also treat navigation-related error strings from DOM teardown as false negatives
+                const isNavigationError = /unloaded|detached|navigat|disconnected|frame|no longer exists/i.test(result.error);
+                if (urlChanged || isNavigationError) {
+                  console.log(`[Agent] press_key Enter false-negative corrected: URL changed or navigation error detected`);
+                  stepResult = { ...result, success: true, error: undefined };
+                }
+              }
 
-              accumulatedProgressRef.current.steps[globalIndex].status = result.success ? "completed" : "failed";
+              orchestrator.recordStepResult(stepResult);
+              results.push(stepResult);
+
+              accumulatedProgressRef.current.steps[globalIndex].status = stepResult.success ? "completed" : "failed";
               updateProgress(accumulatedProgressRef.current);
 
               if (!result.success) {
@@ -1133,13 +1178,22 @@ function App() {
                 console.log(`[Agent] Navigate/Enter detected — waiting for page load...`);
                 await waitForPageLoad();
                 console.log(`[Agent] Page loaded — re-triggering scan`);
+                // Bug Fix #3: small guard delay lets the old overlay's cleanup script finish
+                // before we inject a new one, preventing the race condition that causes
+                // the vignette to be absent or stuck after navigation.
                 stopScanRef.current?.();
+                await new Promise((r) => setTimeout(r, 300));
                 stopScanRef.current = await triggerPageScan();
               }
 
               const postActionSnapshot = await capturePostActionState();
               if (postActionSnapshot) {
                 loopSnapshot = postActionSnapshot;
+                // Bug Fix #2: update pageUrlRef immediately after navigation so the
+                // next model call receives the correct CURRENT PAGE URL in its prompt.
+                if (postActionSnapshot.url) {
+                  pageUrlRef.current = postActionSnapshot.url;
+                }
               }
             }
 

@@ -833,7 +833,7 @@ export async function executeAction(
         flashElement(el);
         break;
 
-      case "press_key":
+      case "press_key": {
         if (!step.value) {
           return {
             success: false,
@@ -850,30 +850,44 @@ export async function executeAction(
         );
         scrollIntoViewIfNeeded(el);
         if (el instanceof HTMLElement) el.focus();
-        {
-          const key = step.value;
-          const keyCode = key === "Enter" ? 13 : key === "Escape" ? 27 : key === "Tab" ? 9 : key === "Backspace" ? 8 : key === "Space" ? 32 : 0;
-          el.dispatchEvent(new KeyboardEvent("keydown", { key, code: key, keyCode, bubbles: true, cancelable: true }));
-          el.dispatchEvent(new KeyboardEvent("keypress", { key, code: key, keyCode, bubbles: true, cancelable: true }));
-          el.dispatchEvent(new KeyboardEvent("keyup", { key, code: key, keyCode, bubbles: true, cancelable: true }));
-          // For Enter key on input elements, also submit the parent form
-          if (key === "Enter" && el.closest("form")) {
-            const form = el.closest("form");
-            if (form) {
-              form.requestSubmit?.() ?? form.submit();
-            }
-          }
-          // CDP fallback: also dispatch via CDP for canvas-based editors
-          const cdpKeyResult = await cdpDispatchKey(key);
-          if (cdpKeyResult.ok) {
-            console.log(
-              "%c[PageClick:CS] │ CDP key dispatch succeeded",
-              "color: #22c55e",
-            );
+        const key = step.value;
+        const keyCode = key === "Enter" ? 13 : key === "Escape" ? 27 : key === "Tab" ? 9 : key === "Backspace" ? 8 : key === "Space" ? 32 : 0;
+        el.dispatchEvent(new KeyboardEvent("keydown", { key, code: key, keyCode, bubbles: true, cancelable: true }));
+        el.dispatchEvent(new KeyboardEvent("keypress", { key, code: key, keyCode, bubbles: true, cancelable: true }));
+        el.dispatchEvent(new KeyboardEvent("keyup", { key, code: key, keyCode, bubbles: true, cancelable: true }));
+        // For Enter key on input elements, also submit the parent form
+        if (key === "Enter" && el.closest("form")) {
+          const form = el.closest("form");
+          if (form) {
+            form.requestSubmit?.() ?? form.submit();
           }
         }
+        // CDP fallback: also dispatch via CDP for canvas-based editors
+        const cdpKeyResult = await cdpDispatchKey(key);
+        if (cdpKeyResult.ok) {
+          console.log(
+            "%c[PageClick:CS] │ CDP key dispatch succeeded",
+            "color: #22c55e",
+          );
+        }
         flashElement(el);
+
+        // IMPORTANT: For Enter key specifically, do NOT wait for DOM stability.
+        // When Enter submits a form/search box it triggers a page navigation,
+        // and calling waitForDomStable() on a navigating page throws a DOM
+        // disconnection error, causing a false success=false result.
+        // The outer runAgentLoop already calls waitForPageLoad() after press_key Enter.
+        if (key === "Enter") {
+          return {
+            success: true,
+            action: step.action,
+            selector: step.selector,
+            observation: buildObservation(el),
+            durationMs: performance.now() - start,
+          };
+        }
         break;
+      }
 
       default:
         console.warn(
@@ -923,17 +937,32 @@ export async function executeAction(
       durationMs: duration,
     };
   } catch (err: any) {
+    const errMsg: string = err?.message || "Action execution failed";
     console.error(
       "%c[PageClick:CS] └── FAILED:",
       "color: #ef4444; font-weight: bold",
       err,
     );
     flashError(el);
+    // If the error is due to page navigation / DOM teardown, treat as success.
+    // This handles cases where the action triggered a navigation but waitForDomStable
+    // or observation threw before we could return cleanly.
+    const isNavigationTeardown = /unloaded|detached|navigat|disconnected|frame|no longer exists|cannot access/i.test(errMsg);
+    if (isNavigationTeardown) {
+      console.log("%c[PageClick:CS] └── Navigation teardown detected — treating as success", "color: #f59e0b; font-weight: bold");
+      return {
+        success: true,
+        action: step.action,
+        selector: step.selector,
+        observation: { url: window.location.href, title: document.title, elementFound: true, elementVisible: true },
+        durationMs: performance.now() - start,
+      };
+    }
     return {
       success: false,
       action: step.action,
       selector: step.selector,
-      error: err.message || "Action execution failed",
+      error: errMsg,
       observation: buildObservation(el),
       durationMs: performance.now() - start,
     };

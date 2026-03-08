@@ -21,6 +21,21 @@ const STATUS_ICONS: Record<TaskStep["status"], string> = {
   failed: "✕",
 };
 
+/** Strip internal chain-of-thought labels from the model's text output. */
+function cleanExplanation(raw: string): string {
+  if (!raw) return "";
+  const stripped = raw
+    .replace(/\*{0,2}CURRENT STATE:\*{0,2}[^\n]*/gi, "")
+    .replace(/\*{0,2}OBSERVATION:\*{0,2}[^\n]*/gi, "")
+    .replace(/\*{0,2}REASONING:\*{0,2}[^\n]*/gi, "")
+    .replace(/\*{0,2}TARGET:\*{0,2}[^\n]*/gi, "")
+    .replace(/\*{2,}/g, "")
+    .trim();
+  if (!stripped) return raw.slice(0, 80); // fallback to truncated raw
+  const first = stripped.split(/(?<=[.!?])\s+/)[0].trim();
+  return first.length > 100 ? first.slice(0, 97) + "…" : first;
+}
+
 function TaskProgressCard({ progress }: TaskProgressCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -50,7 +65,7 @@ function TaskProgressCard({ progress }: TaskProgressCardProps) {
         <span className="task-progress-icon">
           {hasFailed ? "⚠️" : allDone ? "✅" : "⚡"}
         </span>
-        <span className="task-progress-title">{progress.explanation}</span>
+        <span className="task-progress-title">{cleanExplanation(progress.explanation)}</span>
       </div>
 
       {/* Timeline */}
@@ -69,9 +84,8 @@ function TaskProgressCard({ progress }: TaskProgressCardProps) {
               </div>
               {i < progress.steps.length - 1 && (
                 <div
-                  className={`task-step-line ${
-                    step.status === "completed" ? "filled" : ""
-                  }`}
+                  className={`task-step-line ${step.status === "completed" ? "filled" : ""
+                    }`}
                 />
               )}
             </div>

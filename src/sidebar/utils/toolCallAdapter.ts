@@ -34,6 +34,34 @@ export type ParsedToolResult =
 
 // ── Valid action tool names ────────────────────────────────────────
 
+/**
+ * Strip internal chain-of-thought structured blocks from the model's
+ * text output so they never appear in the UI task progress card.
+ * Removes:
+ *   - "CURRENT STATE: ...", "OBSERVATION: ...", "REASONING: ...", "TARGET: ..."
+ *   - The surrounding **bold** markdown markers
+ *   - Any leading/trailing whitespace
+ *
+ * Returns a short, human-readable one-liner (first meaningful sentence)
+ * or an empty string if nothing clean remains.
+ */
+function cleanExplanation(raw: string): string {
+    if (!raw) return "";
+    // Remove each structured label and the sentence following it
+    const stripped = raw
+        .replace(/\*{0,2}CURRENT STATE:\*{0,2}[^\n]*/gi, "")
+        .replace(/\*{0,2}OBSERVATION:\*{0,2}[^\n]*/gi, "")
+        .replace(/\*{0,2}REASONING:\*{0,2}[^\n]*/gi, "")
+        .replace(/\*{0,2}TARGET:\*{0,2}[^\n]*/gi, "")
+        // Strip remaining bold markers
+        .replace(/\*{2,}/g, "")
+        .trim();
+    if (!stripped) return "";
+    // Return just the first sentence to keep the card title short
+    const firstSentence = stripped.split(/(?<=[.!?])\s+/)[0].trim();
+    return firstSentence.length > 120 ? firstSentence.slice(0, 117) + "…" : firstSentence;
+}
+
 const ACTION_TOOL_NAMES = new Set<string>([
     "click",
     "input",
@@ -206,7 +234,7 @@ function dispatchTool(
         return {
             type: "action",
             plan: {
-                explanation: explanation || args.description || `Executing ${name}`,
+                explanation: cleanExplanation(explanation) || args.description || `Executing ${name}`,
                 actions: [step],
             },
         };

@@ -4,8 +4,19 @@
  * with an animated light sweep traveling the perimeter.
  * Runs indefinitely until stopPageScan() is called.
  */
+/** Wait for a tab to finish loading, up to maxWaitMs. */
+async function waitForTabReady(tabId: number, maxWaitMs = 3000): Promise<void> {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!t || t.id !== tabId) return; // tab changed — bail
+    if (t.status === "complete") return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 export async function triggerPageScan(): Promise<() => void> {
-  let stopFn = () => {};
+  let stopFn = () => { };
 
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -21,6 +32,23 @@ export async function triggerPageScan(): Promise<() => void> {
       url.startsWith("brave://");
 
     if (isRestricted) return stopFn;
+
+    // Bug Fix #3: wait for the tab to fully finish loading before injecting
+    // the overlay. If called right after a navigate, the tab may still be in
+    // 'loading' state, causing the script injection to either fail silently or
+    // run on the old page that is being unloaded.
+    if (tab.status !== "complete") {
+      await waitForTabReady(tab.id);
+      // Re-check the tab URL after waiting — it shouldn't have changed to restricted
+      const [refreshed] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!refreshed?.id || refreshed.id !== tab.id) return stopFn;
+      const refreshedUrl = refreshed.url || "";
+      if (
+        refreshedUrl.startsWith("chrome://") ||
+        refreshedUrl.startsWith("chrome-extension://") ||
+        refreshedUrl.startsWith("about:")
+      ) return stopFn;
+    }
 
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -55,7 +83,7 @@ export async function triggerPageScan(): Promise<() => void> {
             }, 800);
           },
         })
-        .catch(() => {});
+        .catch(() => { });
     };
   } catch (err) {
     console.warn("PageScan: could not inject animation", err);
