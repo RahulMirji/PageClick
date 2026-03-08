@@ -453,13 +453,71 @@ async function callOpenAIToolCall(
 
 // --- Main handler ---
 
+// ── Web Search via Tavily ──────────────────────────────────────────────
+
+async function callTavilySearch(query: string, maxResults = 6): Promise<{
+  results: { title: string; url: string; snippet: string; score: number }[];
+  query: string;
+}> {
+  const apiKey = Deno.env.get("TAVILY_API_KEY");
+  if (!apiKey) throw new Error("TAVILY_API_KEY is not configured");
+
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      max_results: maxResults,
+      include_raw_content: false,
+      include_answer: false,
+      search_depth: "basic",
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Tavily error (${res.status}): ${err.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  return {
+    query,
+    results: (data.results || []).map((r: any) => ({
+      title: r.title || "",
+      url: r.url || "",
+      snippet: r.content?.slice(0, 300) || "",
+      score: r.score || 0,
+    })),
+  };
+}
+
+// ── Main handler ────────────────────────────────────────────────────────
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const { messages, model: requestedModel, mode, tools } = await req.json();
+    const body = await req.json();
+    const { messages, model: requestedModel, mode, tools } = body;
+
+    // ── WEB SEARCH mode ─────────────────────────────────────────────
+    if (mode === "web_search") {
+      const query: string = body.query || "";
+      if (!query.trim()) {
+        return new Response(JSON.stringify({ error: "query is required" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      console.log(`[web_search] query="${query}"`);
+      const searchResult = await callTavilySearch(query);
+      return new Response(JSON.stringify(searchResult), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       throw new Error("messages array is required");

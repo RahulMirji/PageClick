@@ -121,6 +121,10 @@ interface MessageMeta {
     explanation: string;
     steps: Array<{ description: string; status: string }>;
   };
+  searchResults?: {
+    query: string;
+    results: Array<{ title: string; url: string; snippet: string; score: number }>;
+  };
 }
 
 /** Encode message metadata into a storable content string */
@@ -156,6 +160,18 @@ export function encodeMessageContent(msg: Message): string {
       steps: msg.taskProgress.steps.map((s) => ({
         description: s.description,
         status: s.status,
+      })),
+    };
+    hasExtra = true;
+  }
+  if (msg.searchResults && msg.searchResults.results.length > 0) {
+    meta.searchResults = {
+      query: msg.searchResults.query,
+      results: msg.searchResults.results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.snippet,
+        score: r.score,
       })),
     };
     hasExtra = true;
@@ -212,6 +228,12 @@ function decodeMessageContent(
           description: s.description,
           status: s.status as "completed" | "running" | "pending" | "failed",
         })),
+      };
+    }
+    if (meta.searchResults && meta.searchResults.results.length > 0) {
+      msg.searchResults = {
+        query: meta.searchResults.query,
+        results: meta.searchResults.results,
       };
     }
 

@@ -8,6 +8,7 @@ import ArtifactViewer from "./ArtifactViewer";
 import { downloadText } from "../utils/downloadService";
 import type { TaskProgress } from "./TaskProgressCard";
 import type { PlanConfirmData } from "./TaskPlanConfirm";
+import type { WebSearchResult } from "./WebSearchResults";
 
 export interface Message {
   role: "user" | "assistant";
@@ -19,11 +20,17 @@ export interface Message {
   hidden?: boolean;
   tokenCount?: number;
   modelId?: string;
+  /** Web search results attached to this message — enables re-opening the panel */
+  searchResults?: { query: string; results: WebSearchResult[] };
 }
 
 interface ChatViewProps {
   messages: Message[];
   isLoading: boolean;
+  /** Overrides the default 'Thinking...' label shown while loading */
+  loadingLabel?: string;
+  /** Called when user clicks 'Show results' chip on a past search message */
+  onShowSearchResults?: (sr: { query: string; results: WebSearchResult[] }) => void;
 }
 
 const MODEL_LABELS: Record<string, string> = {
@@ -51,7 +58,7 @@ export function cleanDisplayContent(text: string): string {
     .trim();
 }
 
-function ChatView({ messages, isLoading }: ChatViewProps) {
+function ChatView({ messages, isLoading, loadingLabel = "Thinking...", onShowSearchResults }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [sharedIndex, setSharedIndex] = useState<number | null>(null);
@@ -199,6 +206,23 @@ function ChatView({ messages, isLoading }: ChatViewProps) {
 
                 {/* Resume card when loop budget is exhausted */}
                 {msg.resumeTask && <TaskResumeCard resume={msg.resumeTask} />}
+
+                {/* Search results re-open chip */}
+                {msg.searchResults && msg.searchResults.results.length > 0 && onShowSearchResults && (
+                  <button
+                    className="ws-reopen-chip"
+                    onClick={() => onShowSearchResults(msg.searchResults!)}
+                    title="Show web search results panel"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="11" cy="11" r="8" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    <span className="ws-chip-count">{msg.searchResults.results.length} results</span>
+                    <span className="ws-chip-query">&middot; "{msg.searchResults.query}"</span>
+                    <span className="ws-chip-action">Show</span>
+                  </button>
+                )}
 
                 {/* Show action buttons on every completed assistant message.
                                     The last message suppresses them while it's still streaming. */}
@@ -391,7 +415,7 @@ function ChatView({ messages, isLoading }: ChatViewProps) {
           <div className="assistant-block">
             <div className="thinking-indicator">
               <div className="thinking-dot"></div>
-              <span>Thinking...</span>
+              <span>{loadingLabel}</span>
             </div>
           </div>
         </div>

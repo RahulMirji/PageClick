@@ -6,9 +6,10 @@ import SearchBox from "./components/SearchBox";
 import BottomNav, { type TabId } from "./components/BottomNav";
 import WorkflowsView from "./components/WorkflowsView";
 import ProfileView from "./components/ProfileView";
-import ProjectsView from "./components/ProjectsView";
+import HistoryView from "./components/HistoryView";
 import PageSuggestions from "./components/PageSuggestions";
 import ConfirmDialog from "./components/ConfirmDialog";
+import WebSearchResults, { type WebSearchResult } from "./components/WebSearchResults";
 import { triggerPageScan } from "./utils/pageScanAnimation";
 import { evaluateStep, logAudit } from "../shared/safety-policy";
 import type { PolicyVerdict } from "../shared/safety-policy";
@@ -203,6 +204,13 @@ function App() {
     block: CheckpointBlock;
     resolve: (approved: boolean) => void;
   } | null>(null);
+
+  // Web search results panel state
+  const [webSearch, setWebSearch] = useState<{
+    query: string;
+    results: WebSearchResult[];
+  } | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
 
   const orchestratorRef = useRef<TaskOrchestrator>(new TaskOrchestrator());
   const pageUrlRef = useRef<string>("");
@@ -684,25 +692,98 @@ function App() {
     console.log(`[Agent] handleSend: "${text.slice(0, 80)}" → mode=${interactionMode}, isTask=${isTask}`);
 
     if (isTask) {
+      // Dismiss any previous search results when starting a task
+      setWebSearch(null);
       resetProgressTracking();
       orchestratorRef.current.startTask(text);
       console.log("[Agent] Starting agent loop...");
       await runAgentLoop(convId);
     } else {
-      // Chat mode — one-shot answer
-      await runInfoRequest(convId);
+      // Chat mode: check if this is a web search request
+      if (isWebSearchRequest(text)) {
+        const query = extractSearchQuery(text);
+        try {
+          console.log(`[WebSearch] Detected search intent. Query: "${query}"`);
+          setIsSearching(true);
+          const sr = await performWebSearch(query);
+          setIsSearching(false);
+          setWebSearch(sr);
+          await runInfoRequest(convId, sr);
+        } catch (err: any) {
+          setIsSearching(false);
+          console.warn("[WebSearch] Search failed, falling back to regular chat:", err.message);
+          await runInfoRequest(convId);
+        }
+      } else {
+        setWebSearch(null);
+        await runInfoRequest(convId);
+      }
     }
   };
 
+  // ── Web search helpers ────────────────────────────────────────────────
+
+  const WEB_SEARCH_PATTERNS = [
+    /\b(search the web|search online|look up online|google|find online|web search|browse the web|search for)\b/i,
+    /\b(what is|who is|when did|latest news|current|today's|news about|recent|trending)\b.{0,50}\?/i,
+    /\b(find me|look up|tell me about|information about|facts about)\b.{0,40}\b(online|web|internet)\b/i,
+  ];
+
+  function isWebSearchRequest(text: string): boolean {
+    return WEB_SEARCH_PATTERNS.some((p) => p.test(text));
+  }
+
+  /** Extracts a clean query from phrases like "search the web for cats" */
+  function extractSearchQuery(text: string): string {
+    // Strip common leading phrases
+    const stripped = text
+      .replace(/^(search the web for|search online for|look up|google|find online|web search for|browse the web for|search for)\s*/i, "")
+      .replace(/^(what is|who is|who are|when did|find me|tell me about|information about|facts about)\s*/i, "")
+      .replace(/[?!.]+$/, "")
+      .trim();
+    return stripped || text.trim();
+  }
+
+  async function performWebSearch(query: string): Promise<{ query: string; results: WebSearchResult[] }> {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ mode: "web_search", query }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Web search failed: ${err.slice(0, 200)}`);
+    }
+    return res.json();
+  }
+
+  // ── Info request (chat mode) ────────────────────────────────────────────
+
   const runInfoRequest = async (
     convId: string,
+    searchResults?: { query: string; results: WebSearchResult[] } | null,
   ) => {
     stopScanRef.current = await triggerPageScan();
     try {
       const snapshot = await capturePage();
-      const prompt = buildInfoPrompt(snapshot, activeProjectRef.current);
+      let prompt = buildInfoPrompt(snapshot, activeProjectRef.current);
+      // If we have web search results, inject them at the top of the system prompt
+      if (searchResults && searchResults.results.length > 0) {
+        const srBlock = [
+          `WEB SEARCH RESULTS for "${searchResults.query}":`,
+          ...searchResults.results.slice(0, 6).map((r, i) =>
+            `[${i + 1}] ${r.title}\n    URL: ${r.url}\n    ${r.snippet}`,
+          ),
+          `\nUse the above search results to answer the user's question. Cite sources by title. Be concise.`,
+        ].join("\n");
+        prompt = srBlock + "\n\n" + prompt;
+      }
       const response = await callModel(prompt);
-      await streamResponse(response, convId, false);
+      await streamResponse(response, convId, false, searchResults);
     } catch (err: any) {
       if (err.name === "AbortError") return; // User stopped
       setMessages((prev) => [
@@ -1683,6 +1764,7 @@ function App() {
     response: Response,
     convId: string,
     hidden = false,
+    searchResults?: { query: string; results: WebSearchResult[] } | null,
   ): Promise<string> => {
     const reader = response.body?.getReader();
     if (!reader) return "";
@@ -1712,7 +1794,7 @@ function App() {
                   const next = [...prev];
                   const last = next[next.length - 1];
                   last.content = fullText;
-                  return next; // Trigger re-render
+                  return next;
                 });
               }
             } catch {
@@ -1725,7 +1807,7 @@ function App() {
       reader.releaseLock();
     }
 
-    // Attach estimated token count to the last message
+    // Attach estimated token count (and search results if present) to the last message
     if (fullText.trim() && !hidden) {
       const tokens = estimateTokens(fullText);
       setMessages((prev) => {
@@ -1733,12 +1815,13 @@ function App() {
         const last = next[next.length - 1];
         if (last && last.role === "assistant") {
           last.tokenCount = tokens;
+          if (searchResults) last.searchResults = searchResults;
         }
         return next;
       });
     }
 
-    // Persist assistant message — include tokenCount so it survives history reload
+    // Persist assistant message — include tokenCount + searchResults so they survive history reload
     const trimmed = fullText.trim();
     if (trimmed && !hidden && convId) {
       const cleanText = stripStructuredBlocks(trimmed);
@@ -1749,6 +1832,7 @@ function App() {
           content: cleanText,
           tokenCount: tokens || undefined,
           modelId: selectedModel,
+          searchResults: searchResults || undefined,
         });
         saveMessage(convId, "assistant", encoded).catch(console.warn);
       }
@@ -1767,8 +1851,12 @@ function App() {
         activeProject={activeProjectRef.current}
       />
       <main className="main-content">
-        {activeTab === "projects" ? (
-          <ProjectsView />
+        {activeTab === "history" ? (
+          <HistoryView
+            onSelectConversation={(id) => { handleSelectConversation(id); setActiveTab("home"); }}
+            onNewChat={() => { handleNewChat(); setActiveTab("home"); }}
+            currentConversationId={currentConversationId}
+          />
         ) : activeTab === "workflows" ? (
           <WorkflowsView
             onRunWorkflow={(prompt) => {
@@ -1787,7 +1875,12 @@ function App() {
           />
         ) : hasMessages ? (
           <>
-            <ChatView messages={messages} isLoading={isLoading} />
+            <ChatView
+              messages={messages}
+              isLoading={isLoading}
+              loadingLabel={isSearching ? "Searching..." : "Thinking..."}
+              onShowSearchResults={(sr) => setWebSearch(sr)}
+            />
             {pendingConfirm && (
               <ConfirmDialog
                 step={pendingConfirm.step}
@@ -1824,12 +1917,28 @@ function App() {
             <Logo />
           </div>
         )}
-        {activeTab !== "projects" &&
+        {activeTab !== "history" &&
           activeTab !== "profile" &&
           activeTab !== "workflows" && (
             <div className="bottom-input">
               {!hasMessages && (
                 <PageSuggestions onSuggestionClick={handleSend} />
+              )}
+              {/* Web search results panel — shown above the input when a search is active */}
+              {webSearch && webSearch.results.length > 0 && (
+                <WebSearchResults
+                  query={webSearch.query}
+                  results={webSearch.results}
+                  onDismiss={() => setWebSearch(null)}
+                  onResultClick={(r) => {
+                    // Open the result URL in the active tab
+                    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                      if (tabs[0]?.id) {
+                        chrome.tabs.update(tabs[0].id, { url: r.url });
+                      }
+                    });
+                  }}
+                />
               )}
               <SearchBox
                 onSend={handleSend}
